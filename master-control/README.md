@@ -7,7 +7,7 @@ This folder contains the master control panel for managing connected agents:
 ## Environment Setup
 
 ### Backend (`master-backend/.env`)
-Create or edit `.env` in `master-backend`:
+Copy `.env.example` to `.env` in `master-backend`, then edit values:
 
 ```
 # Frontend origins allowed by CORS (comma-separated)
@@ -30,7 +30,7 @@ Notes:
 - `MASTER_FRONTEND_URLS` allows multiple dev ports; override for production.
 
 ### Frontend (`master-frontend`)
-Optionally create `.env` in `master-frontend` if your backend runs on a non-default host/port:
+Copy `.env.example` to `.env` in `master-frontend` if your backend runs on a non-default host/port:
 
 ```
 VITE_MASTER_API_URL=http://localhost:9000
