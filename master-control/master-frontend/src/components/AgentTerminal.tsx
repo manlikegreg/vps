@@ -13,6 +13,7 @@ export default function AgentTerminal({ agent, onClose }: Props) {
   const [uploading, setUploading] = useState(false)
   const uploadRef = useRef<HTMLInputElement | null>(null)
   const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || 'http://localhost:9000'
+  const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
 
   useEffect(() => {
     const handler = (line: string) => setLines((prev) => [...prev, line])
@@ -33,7 +34,7 @@ export default function AgentTerminal({ agent, onClose }: Props) {
 
   const refreshStats = async () => {
     try {
-      const res = await fetch(`${apiBase}/agent/${agent.agent_id}/stats`)
+      const res = await fetch(`${apiBase}/agent/${agent.agent_id}/stats`, { headers: { Authorization: `Bearer ${token}` } })
       const data = await res.json()
       setFiles(Array.isArray(data?.files) ? data.files : [])
     } catch {}
@@ -48,7 +49,7 @@ export default function AgentTerminal({ agent, onClose }: Props) {
     try {
       const fd = new FormData()
       fd.append('file', file)
-      const res = await fetch(`${apiBase}/agent/${agent.agent_id}/upload`, { method: 'POST', body: fd })
+      const res = await fetch(`${apiBase}/agent/${agent.agent_id}/upload`, { method: 'POST', body: fd, headers: { Authorization: `Bearer ${token}` } })
       await res.json()
       await refreshStats()
     } catch {}
@@ -93,4 +94,3 @@ export default function AgentTerminal({ agent, onClose }: Props) {
     </div>
   )
 }
-

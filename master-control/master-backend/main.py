@@ -14,14 +14,20 @@ load_dotenv()
 app = FastAPI()
 
 # Configure CORS using env
-frontend_url = os.getenv("MASTER_FRONTEND_URL", "http://localhost:5174")
+frontend_url = os.getenv("MASTER_FRONTEND_URL", "http://localhost:5173")
+origins_env = os.getenv("MASTER_FRONTEND_URLS")
+if origins_env:
+    allowed_origins = [o.strip() for o in origins_env.split(",") if o.strip()]
+else:
+    allowed_origins = [frontend_url, "http://localhost:5174"]
+
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[frontend_url],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+     CORSMiddleware,
+     allow_origins=allowed_origins,
+     allow_credentials=True,
+     allow_methods=["*"],
+     allow_headers=["*"],
+ )
 
 # REST endpoint to list agents
 @app.get('/agents')
@@ -29,8 +35,40 @@ async def list_agents():
     agents = await manager.get_agents()
     return JSONResponse(content=agents)
 
+# Include WebSocket routes
+app.include_router(router)
+
+# --- Admin Auth Endpoints ---
+from pydantic import BaseModel
+from fastapi import Request, Depends, HTTPException, status
+from auth import check_credentials, create_token, verify_token
+
+class LoginBody(BaseModel):
+    username: str
+    password: str
+
+@app.post('/admin/login')
+async def admin_login(body: LoginBody):
+    if not check_credentials(body.username, body.password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    token = create_token(body.username)
+    return JSONResponse(content={"token": token, "token_type": "Bearer"})
+
+def auth_required(request: Request):
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        tok = auth[7:].strip()
+        if verify_token(tok):
+            return True
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+
+@app.get('/admin/verify')
+async def admin_verify(_: bool = Depends(auth_required)):
+    return JSONResponse(content={"ok": True})
+
+# Protect existing REST endpoints
 @app.get('/agent/{agent_id}/stats')
-async def agent_stats(agent_id: str):
+async def agent_stats(agent_id: str, _: bool = Depends(auth_required)):
     http_base = await manager.get_agent_http_base(agent_id)
     if not http_base:
         return JSONResponse(status_code=404, content={"error": "Agent not found"})
@@ -43,7 +81,7 @@ async def agent_stats(agent_id: str):
         return JSONResponse(status_code=500, content={"error": f"Proxy failed: {e}"})
 
 @app.post('/agent/{agent_id}/upload')
-async def agent_upload(agent_id: str, file: UploadFile = File(...)):
+async def agent_upload(agent_id: str, file: UploadFile = File(...), _: bool = Depends(auth_required)):
     http_base = await manager.get_agent_http_base(agent_id)
     if not http_base:
         return JSONResponse(status_code=404, content={"error": "Agent not found"})
@@ -57,6 +95,3 @@ async def agent_upload(agent_id: str, file: UploadFile = File(...)):
             return JSONResponse(status_code=r.status_code, content=r.json())
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"Proxy failed: {e}"})
-
-# Include WebSocket routes
-app.include_router(router)

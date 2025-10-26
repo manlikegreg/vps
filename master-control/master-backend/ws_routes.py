@@ -1,6 +1,7 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from agent_manager import manager
 import json
+from auth import verify_token
 
 router = APIRouter()
 
@@ -46,6 +47,13 @@ async def ws_agent(ws: WebSocket):
 
 @router.websocket('/ws/dashboard')
 async def ws_dashboard(ws: WebSocket):
+    # Require auth token in query string
+    token = ws.query_params.get('token')
+    if not token or not verify_token(token):
+        # Policy violation
+        await ws.close(code=1008)
+        return
+
     await ws.accept()
     await manager.register_dashboard(ws)
     try:

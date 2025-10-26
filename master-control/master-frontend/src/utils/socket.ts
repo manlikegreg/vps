@@ -8,15 +8,32 @@ type DashboardEvent =
 
 class DashboardSocket {
   private ws: WebSocket | null = null;
-  private url = (import.meta as any).env?.VITE_DASHBOARD_WS_URL || 'ws://localhost:9000/ws/dashboard';
+  private baseUrl = (import.meta as any).env?.VITE_DASHBOARD_WS_URL || 'ws://localhost:9000/ws/dashboard';
+  private token: string | null = null;
   private agents: Agent[] = [];
   private listeners: { [agentId: string]: ((line: string) => void)[] } = {};
   private agentsListeners: ((agents: Agent[]) => void)[] = [];
   private statusListeners: ((status: 'connected' | 'disconnected') => void)[] = [];
 
+  setToken(token: string | null) {
+    this.token = token;
+    // Reset socket to apply new auth
+    if (this.ws) {
+      try { this.ws.close(); } catch {}
+      this.ws = null;
+    }
+  }
+
+  private buildUrl() {
+    const t = this.token || (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null);
+    if (!t) return this.baseUrl;
+    const sep = this.baseUrl.includes('?') ? '&' : '?';
+    return `${this.baseUrl}${sep}token=${encodeURIComponent(t)}`;
+  }
+
   connect() {
     if (this.ws) return;
-    this.ws = new WebSocket(this.url);
+    this.ws = new WebSocket(this.buildUrl());
     this.ws.onopen = () => {
       this.statusListeners.forEach((cb) => cb('connected'));
     };
