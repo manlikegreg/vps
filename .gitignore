@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Env and secrets
+.env
+.env.*
+**/.env
+token.txt
+token.txt.txt
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: web-terminal-backend
+    env: python
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn backend.main:socket_app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: USERNAME
+        value: admin
+      - key: PASSWORD
+        value: supersecret
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: 30
