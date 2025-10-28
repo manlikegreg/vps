@@ -1,7 +1,7 @@
 import Terminal from './components/Terminal'
 import Login from './components/Login'
 import './App.css'
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 function App() {
   const [token, setToken] = useState<string | null>(null)
@@ -49,5 +49,4 @@ function App() {
   )
 }
 
-export default App
-
+export default App

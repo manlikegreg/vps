@@ -37,7 +37,6 @@ const Terminal: React.FC = () => {
         background: '#1e1e1e',
         foreground: '#ffffff',
         cursor: '#ffffff',
-        selection: '#3a3a3a',
       },
     });
 
@@ -180,7 +179,7 @@ const Terminal: React.FC = () => {
     });
 
     // Key handling for arrows and Ctrl combos
-    term.onKey(({ key, domEvent }) => {
+    term.onKey(({ domEvent }) => {
       const k = domEvent.key;
       // Ctrl+V paste
       if (!isBusyRef.current && domEvent.ctrlKey && k.toLowerCase() === 'v') {
