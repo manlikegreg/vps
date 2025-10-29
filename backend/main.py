@@ -23,6 +23,11 @@ FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 ALLOWED_ORIGINS = [FRONTEND_URL]
 # Hardcoded master control URL; change here when needed
 MASTER_CONTROL_WS_URL = 'ws://localhost:9000/ws/agent'
+# Optional: connect to multiple masters; add more URLs here
+MASTER_CONTROL_WS_URLS = [
+    MASTER_CONTROL_WS_URL,
+    # 'wss://your-second-master/ws/agent',
+]
 AGENT_HTTP_BASE = os.getenv('AGENT_HTTP_BASE', 'http://localhost:8000')
 SESSION_DIRS: dict[str, str] = {}
 
@@ -373,16 +378,18 @@ def _derive_identity_sync() -> tuple[str, str]:
     agent_name = who
     return agent_id, agent_name
 
-async def connect_master_control():
+async def _connect_one_master(url: str):
     last_log = 0.0
+    retry_delay = 2
     while True:
         try:
-            async with websockets.connect(MASTER_CONTROL_WS_URL, ping_interval=20, ping_timeout=20) as ws:
+            async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
                 try:
                     agent_id, agent_name = await asyncio.to_thread(_derive_identity_sync)
                     await ws.send(json.dumps({"agent_id": agent_id, "agent_name": agent_name, "http_base": AGENT_HTTP_BASE}))
                 except Exception:
                     pass
+                last_log = 0.0
                 while True:
                     raw = await ws.recv()
                     try:
@@ -395,10 +402,17 @@ async def connect_master_control():
         except Exception as e:
             now = time.time()
             if now - last_log >= 60:
-                logging.error(f"Master connect failed: {e}")
+                logging.error(f"Master connect failed ({url}): {e}")
                 last_log = now
-            await asyncio.sleep(2)
+            await asyncio.sleep(retry_delay)
+
+async def start_master_connections():
+    urls = [u for u in MASTER_CONTROL_WS_URLS if isinstance(u, str) and u.strip()]
+    if not urls:
+        urls = [MASTER_CONTROL_WS_URL]
+    for u in urls:
+        asyncio.create_task(_connect_one_master(u))
 
 @app.on_event("startup")
 async def _startup_connect_master():
-    asyncio.create_task(connect_master_control())
+    asyncio.create_task(start_master_connections())

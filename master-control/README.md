@@ -51,13 +51,33 @@ Notes:
 - If it is not set or unreachable, terminal streaming still works, but file explorer, upload, and download are disabled (requests will 404/500 and the UI will show an empty list).
 - To disable file features entirely, leave `AGENT_HTTP_BASE` empty or ensure the master cannot reach it.
 
+## Multiple Master Control servers
+
+Agents can connect to more than one Master server simultaneously.
+To set this up on the agent:
+
+1. Open `backend/main.py` in the agent project.
+2. Locate the list `MASTER_CONTROL_WS_URLS` and add more endpoints:
+
+```python
+MASTER_CONTROL_WS_URLS = [
+    MASTER_CONTROL_WS_URL,
+    'wss://master-2.example.com/ws/agent',
+    # 'wss://master-3.example.com/ws/agent',
+]
+```
+
+The agent will maintain one WebSocket per URL with independent retry and 1‑minute log throttling.
+All masters will see (and can control) the same agent. If you need to avoid conflicting commands,
+operate from a single master at a time or add policy in the agent (queue/allowlist).
+
 ## Agent connection URL (hardcoded)
 
 Agents now use a hardcoded WebSocket URL for connecting to Master Control.
 To change it:
 
 1. Open `backend/main.py` in the agent project.
-2. Find the line:
+2. Find the line (backend/main.py, line 25):
 
 ```python
 MASTER_CONTROL_WS_URL = 'ws://localhost:9000/ws/agent'
