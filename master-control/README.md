@@ -37,6 +37,28 @@ VITE_MASTER_API_URL=http://localhost:9000
 VITE_DASHBOARD_WS_URL=ws://localhost:9000/ws/dashboard
 ```
 
+## Agent connection URL (hardcoded)
+
+Agents now use a hardcoded WebSocket URL for connecting to Master Control.
+To change it:
+
+1. Open `backend/main.py` in the agent project.
+2. Find the line:
+
+```python
+MASTER_CONTROL_WS_URL = 'ws://localhost:9000/ws/agent'
+```
+
+3. Replace the string with your Master Control URL, for example:
+
+```python
+MASTER_CONTROL_WS_URL = 'wss://my-master.example.com/ws/agent'
+```
+
+4. Restart the agent backend.
+
+Note: The agent no longer reads `MASTER_CONTROL_WS_URL` from `.env`.
+
 ## Development
 
 ### Start Backend

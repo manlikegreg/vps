@@ -21,7 +21,8 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s:     %(message)s')
 load_dotenv()
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 ALLOWED_ORIGINS = [FRONTEND_URL]
-MASTER_CONTROL_WS_URL = os.getenv('MASTER_CONTROL_WS_URL', 'ws://localhost:9000/ws/agent')
+# Hardcoded master control URL; change here when needed
+MASTER_CONTROL_WS_URL = 'ws://localhost:9000/ws/agent'
 AGENT_HTTP_BASE = os.getenv('AGENT_HTTP_BASE', 'http://localhost:8000')
 SESSION_DIRS: dict[str, str] = {}
 
