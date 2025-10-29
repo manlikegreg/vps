@@ -71,6 +71,21 @@ The agent will maintain one WebSocket per URL with independent retry and 1‑min
 All masters will see (and can control) the same agent. If you need to avoid conflicting commands,
 operate from a single master at a time or add policy in the agent (queue/allowlist).
 
+Line location: the URL array lives at `backend/main.py`, line 27.
+
+## Command conflict policy (queue/allowlist)
+
+Current default:
+- The agent executes commands as they arrive; if multiple masters send commands concurrently, their outputs may interleave. There is no global lock.
+
+Options you can adopt (not enforced by default):
+- Queue policy: serialize all commands through a single FIFO queue. Prevents conflicts but reduces parallelism.
+- Allowlist policy: only accept commands from specific master URLs/hosts; ignore others. Useful for a primary/secondary setup.
+
+Operational guidance today:
+- Prefer operating from a single master at a time, or coordinate between masters.
+- If you need strict isolation, we can add a simple global queue or allowlist in the agent on request.
+
 ## Agent connection URL (hardcoded)
 
 Agents now use a hardcoded WebSocket URL for connecting to Master Control.
