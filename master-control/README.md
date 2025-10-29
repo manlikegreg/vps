@@ -37,6 +37,20 @@ VITE_MASTER_API_URL=http://localhost:9000
 VITE_DASHBOARD_WS_URL=ws://localhost:9000/ws/dashboard
 ```
 
+## Master proxy (AGENT_HTTP_BASE)
+
+The master backend proxies file operations (list/upload/download) to each agent over HTTP.
+When an agent connects over WebSocket, it advertises `http_base` (from the agent's `AGENT_HTTP_BASE`).
+The master calls the agent on these paths:
+- `GET <http_base>/stats_master` → list current directory
+- `POST <http_base>/upload_master` → upload a file
+- `GET <http_base>/download_master?name=...` → download a file
+
+Notes:
+- `http_base` must be reachable from the master backend (e.g., `http://<agent-ip>:8000`).
+- If it is not set or unreachable, terminal streaming still works, but file explorer, upload, and download are disabled (requests will 404/500 and the UI will show an empty list).
+- To disable file features entirely, leave `AGENT_HTTP_BASE` empty or ensure the master cannot reach it.
+
 ## Agent connection URL (hardcoded)
 
 Agents now use a hardcoded WebSocket URL for connecting to Master Control.
