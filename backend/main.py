@@ -2,7 +2,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-import asyncio, os, sys, subprocess, logging
+import asyncio, os, sys, subprocess, logging, socket
 from dotenv import load_dotenv
 import secrets, time
 import json
@@ -22,8 +22,6 @@ load_dotenv()
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 ALLOWED_ORIGINS = [FRONTEND_URL]
 MASTER_CONTROL_WS_URL = os.getenv('MASTER_CONTROL_WS_URL', 'ws://localhost:9000/ws/agent')
-AGENT_ID = os.getenv('AGENT_ID', f"agent-{os.getenv('COMPUTERNAME','unknown')}")
-AGENT_NAME = os.getenv('AGENT_NAME', AGENT_ID)
 AGENT_HTTP_BASE = os.getenv('AGENT_HTTP_BASE', 'http://localhost:8000')
 SESSION_DIRS: dict[str, str] = {}
 
@@ -357,12 +355,31 @@ async def _run_agent_command(cmd: str, ws):
         code = await proc.wait()
         await _send_line(ws, "exit_code", code)
 
+def _derive_identity_sync() -> tuple[str, str]:
+    # Returns (agent_id, agent_name) derived from local system
+    try:
+        if os.name == 'nt':
+            proc = subprocess.run(["cmd.exe", "/c", "whoami"], capture_output=True, text=True)
+        else:
+            proc = subprocess.run(["whoami"], capture_output=True, text=True)
+        who = (proc.stdout or "").strip() or os.getenv("USERNAME") or os.getenv("USER") or "unknown"
+    except Exception:
+        who = os.getenv("USERNAME") or os.getenv("USER") or "unknown"
+    host = os.getenv('COMPUTERNAME') or socket.gethostname() or 'host'
+    base = f"agent-{host}-{who}".lower()
+    safe = ''.join(ch if ch.isalnum() or ch in ('-', '_', '.') else '-' for ch in base)
+    agent_id = safe.strip('-') or 'agent-unknown'
+    agent_name = who
+    return agent_id, agent_name
+
 async def connect_master_control():
+    last_log = 0.0
     while True:
         try:
             async with websockets.connect(MASTER_CONTROL_WS_URL, ping_interval=20, ping_timeout=20) as ws:
                 try:
-                    await ws.send(json.dumps({"agent_id": AGENT_ID, "agent_name": AGENT_NAME, "http_base": AGENT_HTTP_BASE}))
+                    agent_id, agent_name = await asyncio.to_thread(_derive_identity_sync)
+                    await ws.send(json.dumps({"agent_id": agent_id, "agent_name": agent_name, "http_base": AGENT_HTTP_BASE}))
                 except Exception:
                     pass
                 while True:
@@ -375,7 +392,10 @@ async def connect_master_control():
                     if cmd:
                         await _run_agent_command(cmd, ws)
         except Exception as e:
-            logging.error(f"Master connect failed: {e}")
+            now = time.time()
+            if now - last_log >= 60:
+                logging.error(f"Master connect failed: {e}")
+                last_log = now
             await asyncio.sleep(2)
 
 @app.on_event("startup")
