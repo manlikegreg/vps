@@ -269,9 +269,90 @@ async def websocket_terminal(websocket: WebSocket):
 # Agent-to-Master connector
 current_agent_dir = os.getcwd()
 
+# Global single-run queue across all masters
+queue_lock: asyncio.Lock = asyncio.Lock()
+command_queue: list[tuple[any, str]] = []  # (ws, command)
+queue_task: asyncio.Task | None = None
+command_running: bool = False
+
 async def _send_line(ws, key, text):
     try:
         await ws.send(json.dumps({key: text}))
+    except Exception:
+        pass
+
+async def _broadcast_queue_positions():
+    # Inform waiting masters of their earliest position in queue
+    try:
+        async with queue_lock:
+            # Compute first index per ws
+            pos: dict[any, int] = {}
+            for idx, (w, _c) in enumerate(command_queue):
+                if w not in pos:
+                    pos[w] = idx + 1  # 1-based
+        # Send outside lock
+        for w, p in pos.items():
+            try:
+                await _send_line(w, "output", f"[Queue] You are #{p} in queue\n")
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+async def _process_queue():
+    global queue_task, command_running
+    while True:
+        ws = None
+        cmd = None
+        async with queue_lock:
+            if not command_queue:
+                queue_task = None
+                return
+            # If a command is in progress, wait for next loop
+            if command_running:
+                # Yield to event loop
+                pass
+            else:
+                ws, cmd = command_queue.pop(0)
+                command_running = True
+        if ws is None:
+            await asyncio.sleep(0.05)
+            continue
+        try:
+            await _send_line(ws, "output", "[Queue] Your command is starting...\n")
+            await _run_agent_command(cmd, ws)
+        finally:
+            async with queue_lock:
+                command_running = False
+            # Update positions for remaining queued requests
+            await _broadcast_queue_positions()
+
+async def _ensure_queue_runner():
+    global queue_task
+    async with queue_lock:
+        if command_queue and (queue_task is None or queue_task.done()):
+            queue_task = asyncio.create_task(_process_queue())
+
+async def enqueue_command(ws, cmd: str):
+    # If nothing running and queue empty, run immediately via queue machinery
+    async with queue_lock:
+        command_queue.append((ws, cmd))
+        # Compute this ws position (first occurrence)
+        pos = next((i + 1 for i, (w, _c) in enumerate(command_queue) if w is ws), 1)
+    if pos > 1 or command_running:
+        await _send_line(ws, "output", f"[Queued] You are #{pos} in queue. Waiting for your turn...\n")
+    await _ensure_queue_runner()
+
+async def _remove_queued_for_ws(ws):
+    try:
+        async with queue_lock:
+            # Remove all pending items for this ws
+            i = 0
+            while i < len(command_queue):
+                if command_queue[i][0] is ws:
+                    command_queue.pop(i)
+                else:
+                    i += 1
     except Exception:
         pass
 
@@ -390,15 +471,19 @@ async def _connect_one_master(url: str):
                 except Exception:
                     pass
                 last_log = 0.0
-                while True:
-                    raw = await ws.recv()
-                    try:
-                        data = json.loads(raw)
-                    except Exception:
-                        data = {"command": raw}
-                    cmd = data.get("command")
-                    if cmd:
-                        await _run_agent_command(cmd, ws)
+                try:
+                    while True:
+                        raw = await ws.recv()
+                        try:
+                            data = json.loads(raw)
+                        except Exception:
+                            data = {"command": raw}
+                        cmd = data.get("command")
+                        if cmd:
+                            await enqueue_command(ws, cmd)
+                finally:
+                    # Clean up any queued commands for this master on disconnect
+                    await _remove_queued_for_ws(ws)
         except Exception as e:
             now = time.time()
             if now - last_log >= 60:

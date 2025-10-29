@@ -71,7 +71,7 @@ The agent will maintain one WebSocket per URL with independent retry and 1‑min
 All masters will see (and can control) the same agent. If you need to avoid conflicting commands,
 operate from a single master at a time or add policy in the agent (queue/allowlist).
 
-Line location: the URL array lives at `backend/main.py`, line 27.
+Line location: the URL array lives at `backend/main.py`, line 27. Waiting masters receive terminal messages like "[Queued] You are #N in queue" and updates as their turn approaches.
 
 ## Command conflict policy (queue/allowlist)
 
