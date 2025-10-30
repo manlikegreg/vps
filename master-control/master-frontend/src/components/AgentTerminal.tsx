@@ -9,6 +9,9 @@ export default function AgentTerminal({ agent, onClose }: Props) {
   const [lines, setLines] = useState<string[]>([])
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const lastLineRef = useRef<string>('')
+  const historyRef = useRef<string[]>([])
+  const historyIndexRef = useRef<number>(0)
   const [files, setFiles] = useState<Array<{ name: string; is_dir: boolean; size?: number; modified?: number }>>([])
   const [currentDir, setCurrentDir] = useState<string>('')
   const [uploading, setUploading] = useState(false)
@@ -18,7 +21,13 @@ export default function AgentTerminal({ agent, onClose }: Props) {
   const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
 
   useEffect(() => {
-    const handler = (line: string) => setLines((prev) => [...prev, line])
+    const handler = (line: string) => {
+      setLines((prev) => {
+        if ((prev.length ? prev[prev.length - 1] : lastLineRef.current) === line) return prev
+        lastLineRef.current = line
+        return [...prev, line]
+      })
+    }
     dashboardSocket.subscribe(agent.agent_id, handler)
     return () => dashboardSocket.unsubscribe(agent.agent_id, handler)
   }, [agent.agent_id])
@@ -29,9 +38,12 @@ export default function AgentTerminal({ agent, onClose }: Props) {
   }, [lines])
 
   const send = () => {
-    if (!input.trim()) return
-    lastCmdRef.current = input
-    dashboardSocket.sendCommand(agent.agent_id, input)
+    const cmd = input.trim()
+    if (!cmd) return
+    historyRef.current.push(cmd)
+    historyIndexRef.current = historyRef.current.length
+    lastCmdRef.current = cmd
+    dashboardSocket.sendCommand(agent.agent_id, cmd)
     setInput('')
   }
 
@@ -122,7 +134,41 @@ export default function AgentTerminal({ agent, onClose }: Props) {
         ))}
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
-        <input className="input" value={input} onChange={(e) => setInput(e.target.value)} placeholder="Type a command and press Send" onKeyDown={(e) => { if (e.key === 'Enter') send() }} />
+        <input
+          className="input"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Type a command and press Enter"
+          onKeyDown={(e) => {
+            const k = e.key
+            if (k === 'Enter') { e.preventDefault(); send(); return }
+            if (e.ctrlKey && k.toLowerCase() === 'c') {
+              e.preventDefault()
+              setLines((prev) => [...prev, '^C'])
+              setInput('')
+              return
+            }
+            if (k === 'ArrowUp') {
+              e.preventDefault()
+              if (historyRef.current.length) {
+                historyIndexRef.current = Math.max(0, historyIndexRef.current - 1)
+                const cmd = historyRef.current[historyIndexRef.current] ?? ''
+                setInput(cmd)
+              }
+              return
+            }
+            if (k === 'ArrowDown') {
+              e.preventDefault()
+              if (historyRef.current.length) {
+                historyIndexRef.current = Math.min(historyRef.current.length, historyIndexRef.current + 1)
+                const idx = historyIndexRef.current
+                const cmd = idx < historyRef.current.length ? historyRef.current[idx] : ''
+                setInput(cmd)
+              }
+              return
+            }
+          }}
+        />
         <button className="btn" onClick={send}>Send</button>
       </div>
       <div style={{ marginTop: 8 }}>
