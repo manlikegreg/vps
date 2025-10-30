@@ -15,6 +15,7 @@ class DashboardSocket {
   private exitListeners: { [agentId: string]: ((code: number) => void)[] } = {};
   private agentsListeners: ((agents: Agent[]) => void)[] = [];
   private statusListeners: ((status: 'connected' | 'disconnected') => void)[] = [];
+  private pending: { target: string; command: string }[] = [];
 
   setToken(token: string | null) {
     this.token = token;
@@ -36,6 +37,12 @@ class DashboardSocket {
     if (this.ws) return;
     this.ws = new WebSocket(this.buildUrl());
     this.ws.onopen = () => {
+      // Flush any queued commands
+      const toSend = [...this.pending];
+      this.pending = [];
+      for (const p of toSend) {
+        try { this.ws?.send(JSON.stringify({ target: p.target, command: p.command })); } catch {}
+      }
       this.statusListeners.forEach((cb) => cb('connected'));
     };
     this.ws.onmessage = (ev) => {
@@ -96,7 +103,12 @@ class DashboardSocket {
   }
 
   sendCommand(agentId: string, command: string) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      // Queue until socket opens; ensure connection attempt
+      this.pending.push({ target: agentId, command });
+      this.connect();
+      return;
+    }
     this.ws.send(JSON.stringify({ target: agentId, command }));
   }
 
