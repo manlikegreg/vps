@@ -10,8 +10,10 @@ export default function AgentTerminal({ agent, onClose }: Props) {
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [files, setFiles] = useState<Array<{ name: string; is_dir: boolean; size?: number; modified?: number }>>([])
+  const [currentDir, setCurrentDir] = useState<string>('')
   const [uploading, setUploading] = useState(false)
   const uploadRef = useRef<HTMLInputElement | null>(null)
+  const lastCmdRef = useRef<string>('')
   const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || 'http://localhost:9000'
   const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
 
@@ -28,6 +30,7 @@ export default function AgentTerminal({ agent, onClose }: Props) {
 
   const send = () => {
     if (!input.trim()) return
+    lastCmdRef.current = input
     dashboardSocket.sendCommand(agent.agent_id, input)
     setInput('')
   }
@@ -37,6 +40,7 @@ export default function AgentTerminal({ agent, onClose }: Props) {
       const res = await fetch(`${apiBase}/agent/${agent.agent_id}/stats`, { headers: { Authorization: `Bearer ${token}` } })
       const data = await res.json()
       setFiles(Array.isArray(data?.files) ? data.files : [])
+      setCurrentDir(typeof data?.current_dir === 'string' ? data.current_dir : '')
     } catch {}
   }
 
@@ -57,12 +61,56 @@ export default function AgentTerminal({ agent, onClose }: Props) {
     if (uploadRef.current) uploadRef.current.value = ''
   }
 
+  useEffect(() => {
+    // initial fetch when opening
+    refreshStats()
+  }, [agent.agent_id])
+
+  useEffect(() => {
+    const onExit = (code: number) => {
+      const lc = (lastCmdRef.current || '').trim().toLowerCase()
+      if (code === 0 && (lc === 'cd' || lc.startsWith('cd ') || lc.startsWith('chdir '))) {
+        refreshStats()
+      }
+    }
+    dashboardSocket.onExit(agent.agent_id, onExit)
+    return () => dashboardSocket.offExit(agent.agent_id, onExit)
+  }, [agent.agent_id])
+
+  const cdUp = () => {
+    lastCmdRef.current = 'cd ..'
+    dashboardSocket.sendCommand(agent.agent_id, 'cd ..')
+  }
+  const cdTo = (name: string) => {
+    const cmd = `cd "${name.replace(/\"/g, '\\\"').replace(/"/g, '\\"')}"`
+    lastCmdRef.current = cmd
+    dashboardSocket.sendCommand(agent.agent_id, cmd)
+  }
+
+  const download = async (name: string) => {
+    try {
+      const res = await fetch(`${apiBase}/agent/${agent.agent_id}/download?name=${encodeURIComponent(name)}`, { headers: { Authorization: `Bearer ${token}` } })
+      if (!res.ok) return
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = name
+      document.body.appendChild(a)
+      a.click()
+      URL.revokeObjectURL(url)
+      a.remove()
+    } catch {}
+  }
+
   return (
     <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
         <div style={{ color: '#9efc9e' }}>Terminal: {agent.name}</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <button className="btn secondary" onClick={refreshStats}>Refresh Stats</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ color: '#9efc9e', fontSize: 12 }}>Path: <span style={{ color: '#ddd' }}>{currentDir || '(loading...)'}</span></span>
+          <button className="btn secondary" onClick={cdUp}>Up</button>
+          <button className="btn secondary" onClick={refreshStats}>Refresh</button>
           <button className="btn" onClick={triggerUpload} disabled={uploading}>{uploading ? 'Uploading...' : 'Upload'}</button>
           <input ref={uploadRef} type="file" style={{ display: 'none' }} onChange={onUpload} />
           <button className="btn secondary" onClick={onClose}>Close</button>
@@ -77,20 +125,39 @@ export default function AgentTerminal({ agent, onClose }: Props) {
         <input className="input" value={input} onChange={(e) => setInput(e.target.value)} placeholder="Type a command and press Send" onKeyDown={(e) => { if (e.key === 'Enter') send() }} />
         <button className="btn" onClick={send}>Send</button>
       </div>
-      {files.length > 0 && (
-        <div style={{ marginTop: 8 }}>
-          <h4 style={{ margin: '0 0 6px', color: '#9efc9e', fontSize: 14 }}>Current Directory Files</h4>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 6 }}>
-            {files.map((f, i) => (
-              <>
-                <div style={{ color: '#ddd' }}>{f.name}</div>
-                <div style={{ color: '#888', fontSize: 12 }}>{f.is_dir ? 'dir' : (f.size ?? 0) + ' B'}</div>
-                <div style={{ color: '#666', fontSize: 12 }}>{f.modified ? new Date(f.modified * 1000).toLocaleString() : ''}</div>
-              </>
-            ))}
-          </div>
+      <div style={{ marginTop: 8 }}>
+        <h4 style={{ margin: '0 0 6px', color: '#9efc9e', fontSize: 14 }}>Current Directory Files</h4>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: 6 }}>
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button className="btn secondary" title="Up one folder" onClick={cdUp}>↑</button>
+              <span onClick={cdUp} style={{ color: '#9efc9e', cursor: 'pointer' }}>.. Parent folder</span>
+            </div>
+            <div style={{ color: '#888', fontSize: 12 }}>dir</div>
+            <div style={{ color: '#666', fontSize: 12 }}></div>
+            <div>
+              <button className="btn secondary" onClick={cdUp}>Open</button>
+            </div>
+          </>
+          {files.map((f, i) => (
+            <>
+              <div style={{ color: f.is_dir ? '#9efc9e' : '#ddd', cursor: f.is_dir ? 'pointer' : 'default' }} onClick={() => f.is_dir && cdTo(f.name)}>{f.name}</div>
+              <div style={{ color: '#888', fontSize: 12 }}>{f.is_dir ? 'dir' : (f.size ?? 0) + ' B'}</div>
+              <div style={{ color: '#666', fontSize: 12 }}>{f.modified ? new Date(f.modified * 1000).toLocaleString() : ''}</div>
+              <div>
+                {!f.is_dir ? (
+                  <button className="btn secondary" onClick={() => download(f.name)}>Download</button>
+                ) : (
+                  <button className="btn secondary" onClick={() => cdTo(f.name)}>Open</button>
+                )}
+              </div>
+            </>
+          ))}
         </div>
-      )}
+        {files.length === 0 && (
+          <div style={{ color: '#888', fontSize: 12, marginTop: 6 }}>(No items)</div>
+        )}
+      </div>
     </div>
   )
 }

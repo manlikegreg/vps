@@ -17,7 +17,9 @@ const Terminal: React.FC = () => {
   const historyRef = useRef<string[]>([]);
   const historyIndexRef = useRef<number>(0);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const lastCmdRef = useRef<string>('');
   const [files, setFiles] = useState<Array<{ name: string; is_dir: boolean; size?: number; modified?: number }>>([]);
+  const [currentDir, setCurrentDir] = useState<string>('');
   const [uploading, setUploading] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const apiUrl = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
@@ -99,6 +101,7 @@ const Terminal: React.FC = () => {
          const res = await fetch(`${apiUrl}/stats?token=${encodeURIComponent(token)}`);
          const data = await res.json();
          setFiles(Array.isArray(data?.files) ? data.files : []);
+         setCurrentDir(typeof data?.current_dir === 'string' ? data.current_dir : '');
        } catch {}
      })();
     };
@@ -118,6 +121,20 @@ const Terminal: React.FC = () => {
         if (data.exit_code !== undefined) {
           setBusy(false);
           term.write(`\r\n[Process exited with code ${data.exit_code}]\r\n`);
+          // Auto-refresh files if last command was cd/chdir
+          try {
+            const lc = (lastCmdRef.current || '').trim().toLowerCase();
+            if (lc === 'cd' || lc.startsWith('cd ') || lc.startsWith('chdir ')) {
+              (async () => {
+                try {
+                  const res = await fetch(`${apiUrl}/stats?token=${encodeURIComponent(token)}`);
+                  const data = await res.json();
+                  setFiles(Array.isArray(data?.files) ? data.files : []);
+                  setCurrentDir(typeof data?.current_dir === 'string' ? data.current_dir : '');
+                } catch {}
+              })();
+            }
+          } catch {}
           prompt();
           renderLine();
         }
@@ -151,6 +168,7 @@ const Terminal: React.FC = () => {
         if (input.length > 0) {
           historyRef.current.push(input);
           historyIndexRef.current = historyRef.current.length;
+          lastCmdRef.current = input;
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             setBusy(true);
             wsRef.current.send(input);
@@ -269,8 +287,23 @@ const Terminal: React.FC = () => {
       const res = await fetch(`${apiUrl}/stats?token=${encodeURIComponent(token)}`);
       const data = await res.json();
       setFiles(Array.isArray(data?.files) ? data.files : []);
+      setCurrentDir(typeof data?.current_dir === 'string' ? data.current_dir : '');
     } catch {}
   };
+
+  const sendCommand = (cmd: string) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      setIsBusy(true);
+      isBusyRef.current = true;
+      lastCmdRef.current = cmd;
+      wsRef.current.send(cmd);
+    } else {
+      xtermRef.current?.writeln('Not connected to server');
+    }
+  };
+
+  const cdUp = () => sendCommand('cd ..');
+  const cdTo = (name: string) => sendCommand(`cd "${name.replace(/\"/g, '\\\"').replace(/"/g, '\\"')}"`);
 
   const handleUploadClick = () => {
     uploadInputRef.current?.click();
@@ -293,7 +326,7 @@ const Terminal: React.FC = () => {
 
     return (
       <div style={{ padding: '0', height: '100%' }}>
-        <div style={{ marginBottom: '8px', padding: '0 2px', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ marginBottom: '8px', padding: '0 2px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <span style={{ color: isConnected ? 'green' : 'red', fontSize: '12px', fontWeight: 'bold' }}>
             {isConnected ? '● Connected' : '● Disconnected'}
           </span>
@@ -306,22 +339,54 @@ const Terminal: React.FC = () => {
             Refresh Files
           </button>
           <span style={{ color: '#bbb', fontSize: 12 }}>Files: {files.length}</span>
+          <span style={{ color: '#9efc9e', fontSize: 12, marginLeft: 8 }}>Path: <span style={{ color: '#ddd' }}>{currentDir || '(loading...)'}</span></span>
+          <button onClick={cdUp} style={{ background: 'transparent', border: '1px solid #444', color: '#fff', padding: '4px 8px', borderRadius: 4, cursor: 'pointer' }} disabled={!isConnected || isBusy}>
+            Up
+          </button>
         </div>
         <div ref={terminalRef} style={{ width: '100%', height: 'calc(100% - 24px)', border: '1px solid #333', borderRadius: '4px' }} />
-        {files.length > 0 && (
-          <div style={{ marginTop: 8, padding: 6, border: '1px solid #333', borderRadius: 4 }}>
-            <div style={{ color: '#9efc9e', marginBottom: 6, fontSize: 12 }}>Current Directory Files</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 6 }}>
-              {files.map((f, i) => (
-                <React.Fragment key={i}>
-                  <div style={{ color: '#ddd' }}>{f.name}</div>
-                  <div style={{ color: '#888', fontSize: 12 }}>{f.is_dir ? 'dir' : (f.size ?? 0) + ' B'}</div>
-                  <div style={{ color: '#666', fontSize: 12 }}>{f.modified ? new Date(f.modified * 1000).toLocaleString() : ''}</div>
-                </React.Fragment>
-              ))}
-            </div>
+        <div style={{ marginTop: 8, padding: 6, border: '1px solid #333', borderRadius: 4 }}>
+          <div style={{ color: '#9efc9e', marginBottom: 6, fontSize: 12 }}>Current Directory Files</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: 6 }}>
+            <React.Fragment key="parent-entry">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <button onClick={cdUp} title="Up one folder" style={{ background: 'transparent', border: '1px solid #444', color: '#fff', padding: '2px 6px', borderRadius: 4, cursor: 'pointer' }}>↑</button>
+                <span onClick={cdUp} style={{ color: '#9efc9e', cursor: 'pointer' }}>.. Parent folder</span>
+              </div>
+              <div style={{ color: '#888', fontSize: 12 }}>dir</div>
+              <div style={{ color: '#666', fontSize: 12 }}></div>
+              <div>
+                <button onClick={cdUp} style={{ background: 'transparent', border: '1px solid #444', color: '#fff', padding: '2px 6px', borderRadius: 4, cursor: 'pointer' }}>Open</button>
+              </div>
+            </React.Fragment>
+            {files.map((f, i) => (
+              <React.Fragment key={i}>
+                <div style={{ color: f.is_dir ? '#9efc9e' : '#ddd', cursor: f.is_dir ? 'pointer' : 'default' }} onClick={() => f.is_dir && cdTo(f.name)}>
+                  {f.name}
+                </div>
+                <div style={{ color: '#888', fontSize: 12 }}>{f.is_dir ? 'dir' : (f.size ?? 0) + ' B'}</div>
+                <div style={{ color: '#666', fontSize: 12 }}>{f.modified ? new Date(f.modified * 1000).toLocaleString() : ''}</div>
+                <div>
+                  {!f.is_dir ? (
+                    <a
+                      href={`${apiUrl}/download?token=${encodeURIComponent(token)}&name=${encodeURIComponent(f.name)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ background: 'transparent', border: '1px solid #444', color: '#fff', padding: '2px 6px', borderRadius: 4, textDecoration: 'none' }}
+                    >
+                      Download
+                    </a>
+                  ) : (
+                    <button onClick={() => cdTo(f.name)} style={{ background: 'transparent', border: '1px solid #444', color: '#fff', padding: '2px 6px', borderRadius: 4, cursor: 'pointer' }}>Open</button>
+                  )}
+                </div>
+              </React.Fragment>
+            ))}
           </div>
-        )}
+          {files.length === 0 && (
+            <div style={{ color: '#888', fontSize: 12, marginTop: 6 }}>(No items)</div>
+          )}
+        </div>
       </div>
     );
   };
