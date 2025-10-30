@@ -38,6 +38,13 @@ export default function App() {
     setVerified(true)
   }
 
+  const logout = () => {
+    try { localStorage.removeItem('master_token') } catch {}
+    setToken(null)
+    setVerified(false)
+    dashboardSocket.setToken(null)
+  }
+
   return (
     <div className="app">
       <header className="header">
@@ -47,6 +54,9 @@ export default function App() {
             <span className={`status-dot ${status === 'connected' ? '' : 'red'}`} />
             <span style={{ color: '#aaa', fontSize: 12 }}>Backend {status}</span>
           </div>
+          {verified && (
+            <button className="btn" onClick={logout} style={{ marginLeft: 12 }}>Logout</button>
+          )}
         </div>
         <p>Manage connected agents, send commands, and stream logs.</p>
       </header>
