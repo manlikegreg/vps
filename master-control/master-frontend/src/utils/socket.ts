@@ -12,6 +12,7 @@ class DashboardSocket {
   private token: string | null = null;
   private agents: Agent[] = [];
   private listeners: { [agentId: string]: ((line: string) => void)[] } = {};
+  private exitListeners: { [agentId: string]: ((code: number) => void)[] } = {};
   private agentsListeners: ((agents: Agent[]) => void)[] = [];
   private statusListeners: ((status: 'connected' | 'disconnected') => void)[] = [];
 
@@ -46,6 +47,10 @@ class DashboardSocket {
         } else if (data.type === 'log') {
           const cbs = this.listeners[data.agent_id] || [];
           cbs.forEach((cb) => cb(data.line));
+        } else if ((data as any).type === 'exit') {
+          const d = data as { type: 'exit'; agent_id: string; exit_code: number };
+          const cbs = this.exitListeners[d.agent_id] || [];
+          cbs.forEach((cb) => cb(d.exit_code));
         }
       } catch (e) {
         // ignore parse error
@@ -79,6 +84,15 @@ class DashboardSocket {
 
   unsubscribe(agentId: string, cb: (line: string) => void) {
     this.listeners[agentId] = (this.listeners[agentId] || []).filter((f) => f !== cb);
+  }
+
+  onExit(agentId: string, cb: (code: number) => void) {
+    if (!this.exitListeners[agentId]) this.exitListeners[agentId] = [];
+    this.exitListeners[agentId].push(cb);
+  }
+
+  offExit(agentId: string, cb: (code: number) => void) {
+    this.exitListeners[agentId] = (this.exitListeners[agentId] || []).filter((f) => f !== cb);
   }
 
   sendCommand(agentId: string, command: string) {
