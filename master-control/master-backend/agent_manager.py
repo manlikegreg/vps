@@ -77,6 +77,18 @@ class AgentManager:
         except Exception:
             return False
 
+    async def forward_json(self, agent_id: str, payload: Dict[str, Any]) -> bool:
+        async with self._lock:
+            entry = self.agents.get(agent_id)
+            ws = entry.get("socket") if entry else None
+        if not ws:
+            return False
+        try:
+            await ws.send_json(payload)
+            return True
+        except Exception:
+            return False
+
     async def request_stats(self, agent_id: str) -> Dict[str, Any]:
         async with self._lock:
             entry = self.agents.get(agent_id)

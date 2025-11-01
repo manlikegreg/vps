@@ -17,6 +17,7 @@ export default function AgentTerminal({ agent, onClose }: Props) {
   const [uploading, setUploading] = useState(false)
   const uploadRef = useRef<HTMLInputElement | null>(null)
   const lastCmdRef = useRef<string>('')
+  const [interactive, setInteractive] = useState(false)
   const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || 'http://localhost:9000'
   const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
 
@@ -38,12 +39,16 @@ export default function AgentTerminal({ agent, onClose }: Props) {
   }, [lines])
 
   const send = () => {
-    const cmd = input.trim()
-    if (!cmd) return
+    const cmd = input
+    if (!cmd.trim()) return
     historyRef.current.push(cmd)
     historyIndexRef.current = historyRef.current.length
     lastCmdRef.current = cmd
-    dashboardSocket.sendCommand(agent.agent_id, cmd)
+    if (interactive) {
+      dashboardSocket.sendStdin(agent.agent_id, cmd)
+    } else {
+      dashboardSocket.sendCommand(agent.agent_id, cmd)
+    }
     setInput('')
   }
 
@@ -89,6 +94,13 @@ export default function AgentTerminal({ agent, onClose }: Props) {
     return () => dashboardSocket.offExit(agent.agent_id, onExit)
   }, [agent.agent_id])
 
+  useEffect(() => {
+    // auto-exit interactive on process end
+    const onExit2 = (_: number) => setInteractive(false)
+    dashboardSocket.onExit(agent.agent_id, onExit2)
+    return () => dashboardSocket.offExit(agent.agent_id, onExit2)
+  }, [agent.agent_id])
+
   const cdUp = () => {
     lastCmdRef.current = 'cd ..'
     dashboardSocket.sendCommand(agent.agent_id, 'cd ..')
@@ -118,13 +130,18 @@ export default function AgentTerminal({ agent, onClose }: Props) {
   return (
     <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-        <div style={{ color: '#9efc9e' }}>Terminal: {agent.name}</div>
+        <div style={{ color: '#9efc9e' }}>Terminal: {agent.name} {interactive && <span style={{ color:'#ffb347', fontSize:12, marginLeft:8 }}>(interactive)</span>}</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ color: '#9efc9e', fontSize: 12 }}>Path: <span style={{ color: '#ddd' }}>{currentDir || '(loading...)'}</span></span>
           <button className="btn secondary" onClick={cdUp}>Up</button>
           <button className="btn secondary" onClick={refreshStats}>Refresh</button>
           <button className="btn" onClick={triggerUpload} disabled={uploading}>{uploading ? 'Uploading...' : 'Upload'}</button>
           <input ref={uploadRef} type="file" style={{ display: 'none' }} onChange={onUpload} />
+          {!interactive ? (
+            <button className="btn" onClick={() => { const c = (input || '').trim(); if (!c) return; setInteractive(true); dashboardSocket.startInteractive(agent.agent_id, c); }}>Start Interactive</button>
+          ) : (
+            <button className="btn secondary" onClick={() => { dashboardSocket.endInteractive(agent.agent_id); setInteractive(false); }}>Stop Interactive</button>
+          )}
           <button className="btn secondary" onClick={onClose}>Close</button>
         </div>
       </div>
@@ -145,6 +162,7 @@ export default function AgentTerminal({ agent, onClose }: Props) {
             if (e.ctrlKey && k.toLowerCase() === 'c') {
               e.preventDefault()
               setLines((prev) => [...prev, '^C'])
+              if (interactive) { dashboardSocket.endInteractive(agent.agent_id); setInteractive(false) }
               setInput('')
               return
             }

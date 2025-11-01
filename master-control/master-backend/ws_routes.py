@@ -71,9 +71,13 @@ async def ws_dashboard(ws: WebSocket):
             except Exception:
                 data = {}
             target = data.get('target')
-            command = data.get('command')
-            if target and command:
+            if target and 'command' in data:
+                command = data.get('command')
                 ok = await manager.forward_command(target, command)
+                if not ok:
+                    await ws.send_json({"type": "error", "message": f"Agent {target} not available"})
+            elif target and data.get('type') in ('start_interactive','stdin','end_interactive'):
+                ok = await manager.forward_json(target, data)
                 if not ok:
                     await ws.send_json({"type": "error", "message": f"Agent {target} not available"})
     except WebSocketDisconnect:

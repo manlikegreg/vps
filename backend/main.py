@@ -29,7 +29,7 @@ MASTER_CONTROL_WS_URLS = [
     MASTER_CONTROL_WS_URL,
     # 'wss://your-second-master/ws/agent',
 ]
-AGENT_HTTP_BASE = os.getenv('AGENT_HTTP_BASE', 'http://0.0.0.0:8000')
+AGENT_HTTP_BASE = os.getenv('AGENT_HTTP_BASE', 'http://127.0.0.1:8000')
 SESSION_DIRS: dict[str, str] = {}
 # Kill long-running commands to avoid stuck queue (seconds)
 COMMAND_TIMEOUT_SECONDS = int(os.getenv('COMMAND_TIMEOUT_SECONDS', '30'))
@@ -567,6 +567,9 @@ def _derive_identity_sync() -> tuple[str, str]:
     agent_name = who
     return agent_id, agent_name
 
+# Track interactive sessions per master connection
+interactive_sessions: dict[Any, dict] = {}
+
 async def _connect_one_master(url: str):
     last_log = 0.0
     retry_delay = 2
@@ -613,12 +616,185 @@ async def _connect_one_master(url: str):
                             except Exception:
                                 pass
                             continue
+                        # Interactive session control
+                        if isinstance(data, dict) and data.get("type") == "start_interactive":
+                            if ws in interactive_sessions:
+                                try:
+                                    await ws.send(json.dumps({"output": "[Interactive already running]\n"}))
+                                except Exception:
+                                    pass
+                                continue
+                            start_cmd = data.get("command") or ""
+                            if not start_cmd.strip():
+                                try:
+                                    await ws.send(json.dumps({"error": "No command specified for interactive session\n"}))
+                                except Exception:
+                                    pass
+                                continue
+                            # Start interactive process
+                            if os.name == "nt":
+                                def start_proc():
+                                    return subprocess.Popen([
+                                        "cmd.exe","/c", start_cmd
+                                    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE,
+                                    text=True, encoding="utf-8", errors="replace", bufsize=1,
+                                    cwd=current_agent_dir)
+                                proc = await asyncio.to_thread(start_proc)
+                            else:
+                                proc = await asyncio.create_subprocess_shell(
+                                    start_cmd,
+                                    stdout=asyncio.subprocess.PIPE,
+                                    stderr=asyncio.subprocess.PIPE,
+                                    stdin=asyncio.subprocess.PIPE,
+                                    cwd=current_agent_dir,
+                                )
+                            # Readers
+                            loop = asyncio.get_running_loop()
+                            q: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
+                            def reader_stream(stream, key):
+                                try:
+                                    for line in stream:
+                                        loop.call_soon_threadsafe(q.put_nowait, (key, line))
+                                except Exception as e:
+                                    loop.call_soon_threadsafe(q.put_nowait, ("error", f"[reader {key} failed: {e}\n]"))
+                                finally:
+                                    loop.call_soon_threadsafe(q.put_nowait, ("__done__", key))
+                            tasks = []
+                            if os.name == 'nt':
+                                tasks.append(asyncio.create_task(asyncio.to_thread(reader_stream, proc.stdout, "output")))
+                                tasks.append(asyncio.create_task(asyncio.to_thread(reader_stream, proc.stderr, "error")))
+                            else:
+                                async def stream_reader(stream, key):
+                                    try:
+                                        while True:
+                                            line = await stream.readline()
+                                            if not line:
+                                                break
+                                            text = line.decode(errors="replace")
+                                            await q.put((key, text))
+                                    except Exception:
+                                        pass
+                                    finally:
+                                        await q.put(("__done__", key))
+                                tasks.append(asyncio.create_task(stream_reader(proc.stdout, "output")))
+                                tasks.append(asyncio.create_task(stream_reader(proc.stderr, "error")))
+                            interactive_sessions[ws] = {"proc": proc, "queue": q, "tasks": tasks}
+                            try:
+                                await ws.send(json.dumps({"output": "[Interactive session started]\n"}))
+                            except Exception:
+                                pass
+                            continue
+                        if isinstance(data, dict) and data.get("type") == "stdin":
+                            sess = interactive_sessions.get(ws)
+                            if not sess:
+                                continue
+                            proc = sess.get("proc")
+                            try:
+                                payload = data.get("data", "")
+                                if os.name == 'nt':
+                                    def write_stdin():
+                                        try:
+                                            proc.stdin.write(payload)
+                                            if not payload.endswith("\n"):
+                                                proc.stdin.write("\n")
+                                            proc.stdin.flush()
+                                        except Exception:
+                                            pass
+                                    await asyncio.to_thread(write_stdin)
+                                else:
+                                    if not payload.endswith("\n"):
+                                        payload += "\n"
+                                    proc.stdin.write(payload.encode())
+                                    await proc.stdin.drain()
+                            except Exception:
+                                pass
+                            continue
+                        if isinstance(data, dict) and data.get("type") == "end_interactive":
+                            sess = interactive_sessions.pop(ws, None)
+                            if sess:
+                                proc = sess.get("proc")
+                                try:
+                                    if os.name == 'nt':
+                                        def _term():
+                                            try:
+                                                proc.terminate()
+                                            except Exception:
+                                                pass
+                                        await asyncio.to_thread(_term)
+                                    else:
+                                        proc.terminate()
+                                except Exception:
+                                    pass
+                            continue
                         cmd = data.get("command")
                         if cmd:
                             await enqueue_command(ws, cmd)
+                        # After any data, check interactive session completion
+                        sess = interactive_sessions.get(ws)
+                        if sess:
+                            # Drain queue and forward to master
+                            q: asyncio.Queue = sess.get("queue")
+                            drained = True
+                            while drained:
+                                drained = False
+                                try:
+                                    item = q.get_nowait()
+                                except asyncio.QueueEmpty:
+                                    item = None
+                                if item is not None:
+                                    drained = True
+                                    key, payload = item
+                                    if key == "__done__":
+                                        # Wait for both to finish
+                                        # We don't count here; exit is detected by return code below
+                                        pass
+                                    else:
+                                        try:
+                                            await ws.send(json.dumps({key: payload}))
+                                        except Exception:
+                                            pass
+                            # Check process exit non-blocking
+                            proc = sess.get("proc")
+                            code = None
+                            try:
+                                if os.name == 'nt':
+                                    code = await asyncio.to_thread(proc.poll)
+                                else:
+                                    code = proc.returncode
+                            except Exception:
+                                pass
+                            if code is not None:
+                                try:
+                                    await ws.send(json.dumps({"exit_code": int(code)}))
+                                except Exception:
+                                    pass
+                                # Cleanup
+                                for t in sess.get("tasks", []):
+                                    try:
+                                        t.cancel()
+                                    except Exception:
+                                        pass
+                                interactive_sessions.pop(ws, None)
                 finally:
                     # Clean up any queued commands for this master on disconnect
                     await _remove_queued_for_ws(ws)
+                    # Kill any interactive session tied to this ws
+                    sess = interactive_sessions.pop(ws, None)
+                    if sess:
+                        try:
+                            proc = sess.get("proc")
+                            if os.name == 'nt':
+                                def _kill():
+                                    try:
+                                        if proc.poll() is None:
+                                            proc.kill()
+                                    except Exception:
+                                        pass
+                                await asyncio.to_thread(_kill)
+                            else:
+                                proc.kill()
+                        except Exception:
+                            pass
         except Exception as e:
             now = time.time()
             if now - last_log >= 60:

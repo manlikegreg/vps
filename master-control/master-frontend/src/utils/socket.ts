@@ -15,7 +15,7 @@ class DashboardSocket {
   private exitListeners: { [agentId: string]: ((code: number) => void)[] } = {};
   private agentsListeners: ((agents: Agent[]) => void)[] = [];
   private statusListeners: ((status: 'connected' | 'disconnected') => void)[] = [];
-  private pending: { target: string; command: string }[] = [];
+  private pending: { target: string; command?: string; payload?: any }[] = [];
 
   setToken(token: string | null) {
     this.token = token;
@@ -41,7 +41,10 @@ class DashboardSocket {
       const toSend = [...this.pending];
       this.pending = [];
       for (const p of toSend) {
-        try { this.ws?.send(JSON.stringify({ target: p.target, command: p.command })); } catch {}
+        try {
+          if (p.payload) this.ws?.send(JSON.stringify({ target: p.target, ...p.payload }));
+          else this.ws?.send(JSON.stringify({ target: p.target, command: p.command }));
+        } catch {}
       }
       this.statusListeners.forEach((cb) => cb('connected'));
     };
@@ -114,6 +117,36 @@ class DashboardSocket {
 
   sendCommandToMany(agentIds: string[], command: string) {
     agentIds.forEach((id) => this.sendCommand(id, command));
+  }
+
+  startInteractive(agentId: string, command: string) {
+    const payload = { type: 'start_interactive', command };
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.pending.push({ target: agentId, payload });
+      this.connect();
+      return;
+    }
+    this.ws.send(JSON.stringify({ target: agentId, ...payload }));
+  }
+
+  sendStdin(agentId: string, data: string) {
+    const payload = { type: 'stdin', data };
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.pending.push({ target: agentId, payload });
+      this.connect();
+      return;
+    }
+    this.ws.send(JSON.stringify({ target: agentId, ...payload }));
+  }
+
+  endInteractive(agentId: string) {
+    const payload = { type: 'end_interactive' };
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.pending.push({ target: agentId, payload });
+      this.connect();
+      return;
+    }
+    this.ws.send(JSON.stringify({ target: agentId, ...payload }));
   }
 }
 
