@@ -110,30 +110,46 @@ Note: The agent no longer reads `MASTER_CONTROL_WS_URL` from `.env`.
 
 ## Remote view auto-start (hardcoded)
 
-Agents auto-start screen streaming on each master connection.
-To change this behavior:
+- File: `backend/main.py`
+- Lines: 40–44
+
+Agents do not auto-start streaming by default. To change this behavior:
 
 1. Open `backend/main.py`.
 2. Edit line 41:
 
 ```python
-SCREEN_AUTO_START = True
+SCREEN_AUTO_START = False
 ```
 
-Default is `False` (no auto-start). Set to `True` to auto-start streaming after the agent connects to a master. Restart the agent backend after changing.
+Set to `True` to auto-start streaming after the agent connects to a master. Restart the agent backend after changing.
 
 ### Remote control (hardcoded)
 
 To enable/disable remote keyboard/mouse injection:
 
-1. Open `backend/main.py`.
-2. Edit line 40:
+- File: `backend/main.py`
+- Line: 40
 
 ```python
 REMOTE_CONTROL_ENABLED = True
 ```
 
 Set to `False` to disable remote control, then restart the agent.
+
+### Agent identity (hardcoded)
+
+To avoid leaking host/user in `agent_id`, IDs are hardcoded near the top.
+
+- File: `backend/main.py`
+- Lines: 42–44
+
+```python
+AGENT_ID_HARDCODED = 'agent-public'
+AGENT_NAME_HARDCODED = 'agent'
+```
+
+Edit those and restart the agent.
 
 ## Development
 
