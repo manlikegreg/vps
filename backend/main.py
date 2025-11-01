@@ -31,6 +31,8 @@ MASTER_CONTROL_WS_URLS = [
 ]
 AGENT_HTTP_BASE = os.getenv('AGENT_HTTP_BASE', 'http://0.0.0.0:8000')
 SESSION_DIRS: dict[str, str] = {}
+# Kill long-running commands to avoid stuck queue (seconds)
+COMMAND_TIMEOUT_SECONDS = int(os.getenv('COMMAND_TIMEOUT_SECONDS', '60'))
 
 app = FastAPI()
 app.add_middleware(
@@ -198,6 +200,16 @@ async def websocket_terminal(websocket: WebSocket):
                 continue
             cmd_to_run = msg
 
+            # Block interactive shells without arguments (e.g., 'netsh')
+            try:
+                forbid, headx = _is_interactive_disallowed(cmd_to_run)
+            except Exception:
+                forbid, headx = (False, "")
+            if forbid:
+                await websocket.send_json({"error": f"Interactive command '{headx}' requires arguments; interactive sessions are not supported.\n"})
+                await websocket.send_json({"exit_code": 1})
+                continue
+
             # Execute and stream command output
             if os.name == "nt":
                 # Windows fallback: use threads with subprocess.Popen to avoid NotImplementedError
@@ -231,7 +243,21 @@ async def websocket_terminal(websocket: WebSocket):
                         continue
                     await websocket.send_json({key: payload})
                 await asyncio.gather(t1, t2)
-                return_code = await asyncio.to_thread(proc.wait)
+                try:
+                    return_code = await asyncio.wait_for(asyncio.to_thread(proc.wait), timeout=COMMAND_TIMEOUT_SECONDS)
+                except asyncio.TimeoutError:
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.5)
+                    try:
+                        if proc.poll() is None:
+                            proc.kill()
+                    except Exception:
+                        pass
+                    await websocket.send_json({"error": f"[Timeout] Command exceeded {COMMAND_TIMEOUT_SECONDS}s and was terminated.\n"})
+                    return_code = 124
                 await websocket.send_json({"exit_code": return_code})
             else:
                 proc = await asyncio.create_subprocess_shell(
@@ -254,7 +280,22 @@ async def websocket_terminal(websocket: WebSocket):
                     stream_reader(proc.stdout, "output"),
                     stream_reader(proc.stderr, "error"),
                 )
-                return_code = await proc.wait()
+                try:
+                    return_code = await asyncio.wait_for(proc.wait(), timeout=COMMAND_TIMEOUT_SECONDS)
+                except asyncio.TimeoutError:
+                    try:
+                        proc.terminate()
+                    except ProcessLookupError:
+                        pass
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.5)
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    await websocket.send_json({"error": f"[Timeout] Command exceeded {COMMAND_TIMEOUT_SECONDS}s and was terminated.\n"})
+                    return_code = 124
                 await websocket.send_json({"exit_code": return_code})
 
     except WebSocketDisconnect:
@@ -287,7 +328,7 @@ async def _broadcast_queue_positions():
     try:
         async with queue_lock:
             # Compute first index per ws
-            pos: dict[any, int] = {}
+            pos: dict[Any, int] = {}
             for idx, (w, _c) in enumerate(command_queue):
                 if w not in pos:
                     pos[w] = idx + 1  # 1-based
@@ -364,6 +405,22 @@ async def _remove_queued_for_ws(ws):
     except Exception:
         pass
 
+def _is_interactive_disallowed(cmd: str) -> Tuple[bool, str]:
+    try:
+        stripped = cmd.strip()
+        parts0 = stripped.split(maxsplit=1)
+        head0 = parts0[0].lower() if parts0 else ""
+        arg0 = parts0[1] if len(parts0) > 1 else None
+        if os.name == "nt":
+            block = {"netsh", "powershell", "cmd"}
+        else:
+            block = {"bash", "sh", "zsh"}
+        if head0 in block and not arg0:
+            return True, head0
+        return False, head0
+    except Exception:
+        return False, ""
+
 async def _run_agent_command(cmd: str, ws):
     global current_agent_dir
     stripped = cmd.strip()
@@ -391,6 +448,16 @@ async def _run_agent_command(cmd: str, ws):
         else:
             await _send_line(ws, "output", current_agent_dir + "\n")
             await _send_line(ws, "exit_code", 0)
+        return
+
+    # Block interactive shells without arguments (e.g., 'netsh')
+    try:
+        forbid, headx = _is_interactive_disallowed(cmd)
+    except Exception:
+        forbid, headx = (False, "")
+    if forbid:
+        await _send_line(ws, "error", f"Interactive command '{headx}' requires arguments; interactive sessions are not supported.\n")
+        await _send_line(ws, "exit_code", 1)
         return
 
     if os.name == "nt":
@@ -424,7 +491,21 @@ async def _run_agent_command(cmd: str, ws):
                 continue
             await _send_line(ws, key, payload)
         await asyncio.gather(t1, t2)
-        code = await asyncio.to_thread(proc.wait)
+        try:
+            code = await asyncio.wait_for(asyncio.to_thread(proc.wait), timeout=COMMAND_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            await asyncio.sleep(0.5)
+            try:
+                if proc.poll() is None:
+                    proc.kill()
+            except Exception:
+                pass
+            await _send_line(ws, "error", f"[Timeout] Command exceeded {COMMAND_TIMEOUT_SECONDS}s and was terminated.\n")
+            code = 124
         await _send_line(ws, "exit_code", code)
     else:
         proc = await asyncio.create_subprocess_shell(
@@ -447,7 +528,22 @@ async def _run_agent_command(cmd: str, ws):
             stream_reader(proc.stdout, "output"),
             stream_reader(proc.stderr, "error"),
         )
-        code = await proc.wait()
+        try:
+            code = await asyncio.wait_for(proc.wait(), timeout=COMMAND_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            try:
+                proc.terminate()
+            except ProcessLookupError:
+                pass
+            except Exception:
+                pass
+            await asyncio.sleep(0.5)
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            await _send_line(ws, "error", f"[Timeout] Command exceeded {COMMAND_TIMEOUT_SECONDS}s and was terminated.\n")
+            code = 124
         await _send_line(ws, "exit_code", code)
 
 def _derive_identity_sync() -> tuple[str, str]:
