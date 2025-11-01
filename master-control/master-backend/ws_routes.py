@@ -29,6 +29,13 @@ async def ws_agent(ws: WebSocket):
             except Exception:
                 data = {"output": msg}
 
+            # Handle agent RPC responses (e.g., stats)
+            if isinstance(data, dict) and data.get('type') == 'stats_response':
+                req_id = data.get('request_id')
+                payload = data.get('data') if 'data' in data else {"error": data.get('error', 'Unknown error')}
+                await manager.complete_stats_request(req_id, payload)
+                continue
+
             if 'output' in data:
                 await manager.relay_output_to_dashboards(agent_id, str(data['output']))
             elif 'line' in data:

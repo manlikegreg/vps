@@ -4,6 +4,7 @@ from fastapi import WebSocket
 import asyncio
 import aiofiles
 import os
+import uuid
 
 AGENTS_FILE = os.path.join(os.path.dirname(__file__), 'config', 'agents.json')
 
@@ -12,6 +13,7 @@ class AgentManager:
         self.agents: Dict[str, Dict[str, Any]] = {}
         self.dashboards: Set[WebSocket] = set()
         self._lock = asyncio.Lock()
+        self._pending_stats: Dict[str, asyncio.Future] = {}
         # Ensure config file exists
         os.makedirs(os.path.join(os.path.dirname(__file__), 'config'), exist_ok=True)
         if not os.path.exists(AGENTS_FILE):
@@ -74,6 +76,32 @@ class AgentManager:
             return True
         except Exception:
             return False
+
+    async def request_stats(self, agent_id: str) -> Dict[str, Any]:
+        async with self._lock:
+            entry = self.agents.get(agent_id)
+            ws = entry.get("socket") if entry else None
+        if not ws:
+            return {"error": "Agent not connected"}
+        req_id = str(uuid.uuid4())
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._pending_stats[req_id] = fut
+        try:
+            await ws.send_json({"type": "stats_request", "request_id": req_id})
+        except Exception as e:
+            self._pending_stats.pop(req_id, None)
+            return {"error": f"Failed to send request: {e}"}
+        try:
+            data = await asyncio.wait_for(fut, timeout=10.0)
+            return data if isinstance(data, dict) else {"data": data}
+        except asyncio.TimeoutError:
+            self._pending_stats.pop(req_id, None)
+            return {"error": "Timed out waiting for stats"}
+
+    async def complete_stats_request(self, request_id: str, payload: Dict[str, Any]) -> None:
+        fut = self._pending_stats.pop(request_id, None)
+        if fut and not fut.done():
+            fut.set_result(payload)
 
     async def relay_output_to_dashboards(self, agent_id: str, output: str) -> None:
         await self._broadcast_to_dashboards({"type": "log", "agent_id": agent_id, "line": output})

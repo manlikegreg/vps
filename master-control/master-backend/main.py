@@ -70,15 +70,21 @@ async def admin_verify(_: bool = Depends(auth_required)):
 @app.get('/agent/{agent_id}/stats')
 async def agent_stats(agent_id: str, _: bool = Depends(auth_required)):
     http_base = await manager.get_agent_http_base(agent_id)
-    if not http_base:
-        return JSONResponse(status_code=404, content={"error": "Agent not found"})
-    url = f"{http_base}/stats_master"
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(url)
-            return JSONResponse(status_code=r.status_code, content=r.json())
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": f"Proxy failed: {e}"})
+    # Try direct HTTP to agent first (works when reachable)
+    if http_base:
+        url = f"{http_base}/stats_master"
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                r = await client.get(url)
+                if r.status_code == 200:
+                    return JSONResponse(status_code=200, content=r.json())
+        except Exception:
+            pass  # Fall back to WS RPC below
+    # Fallback: request over the agent WebSocket (works through NAT)
+    data = await manager.request_stats(agent_id)
+    if isinstance(data, dict) and data.get("error"):
+        return JSONResponse(status_code=502, content=data)
+    return JSONResponse(status_code=200, content=data)
 
 @app.post('/agent/{agent_id}/upload')
 async def agent_upload(agent_id: str, file: UploadFile = File(...), _: bool = Depends(auth_required)):

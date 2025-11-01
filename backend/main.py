@@ -8,6 +8,7 @@ import secrets, time
 import json
 import websockets
 from fastapi import Request, UploadFile, File
+from typing import Any, Tuple
 
 # Ensure Windows supports asyncio subprocesses
 if sys.platform == 'win32':
@@ -22,13 +23,13 @@ load_dotenv()
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 ALLOWED_ORIGINS = [FRONTEND_URL]
 # Hardcoded master control URL; change here when needed
-MASTER_CONTROL_WS_URL = 'ws://localhost:9000/ws/agent'
+MASTER_CONTROL_WS_URL = 'wss://mastervpsback.onrender.com/ws/agent'
 # Optional: connect to multiple masters; add more URLs here
 MASTER_CONTROL_WS_URLS = [
     MASTER_CONTROL_WS_URL,
     # 'wss://your-second-master/ws/agent',
 ]
-AGENT_HTTP_BASE = os.getenv('AGENT_HTTP_BASE', 'http://localhost:8000')
+AGENT_HTTP_BASE = os.getenv('AGENT_HTTP_BASE', 'http://0.0.0.0:8000')
 SESSION_DIRS: dict[str, str] = {}
 
 app = FastAPI()
@@ -271,7 +272,7 @@ current_agent_dir = os.getcwd()
 
 # Global single-run queue across all masters
 queue_lock: asyncio.Lock = asyncio.Lock()
-command_queue: list[tuple[any, str]] = []  # (ws, command)
+command_queue: list[tuple[Any, str]] = []  # (ws, command)
 queue_task: asyncio.Task | None = None
 command_running: bool = False
 
@@ -306,11 +307,13 @@ async def _process_queue():
         cmd = None
         async with queue_lock:
             if not command_queue:
+                # Nothing to do; reset runner state and exit
                 queue_task = None
+                command_running = False
                 return
-            # If a command is in progress, wait for next loop
+            # If a command is in progress, wait before checking again
             if command_running:
-                # Yield to event loop
+                # Avoid busy loop while another command runs
                 pass
             else:
                 ws, cmd = command_queue.pop(0)
@@ -321,6 +324,8 @@ async def _process_queue():
         try:
             await _send_line(ws, "output", "[Queue] Your command is starting...\n")
             await _run_agent_command(cmd, ws)
+        except Exception:
+            logging.exception("Queued command failed")
         finally:
             async with queue_lock:
                 command_running = False
@@ -328,9 +333,12 @@ async def _process_queue():
             await _broadcast_queue_positions()
 
 async def _ensure_queue_runner():
-    global queue_task
+    global queue_task, command_running
     async with queue_lock:
         if command_queue and (queue_task is None or queue_task.done()):
+            # If previous runner crashed, make sure we clear the busy flag
+            if queue_task is not None and queue_task.done():
+                command_running = False
             queue_task = asyncio.create_task(_process_queue())
 
 async def enqueue_command(ws, cmd: str):
@@ -478,6 +486,33 @@ async def _connect_one_master(url: str):
                             data = json.loads(raw)
                         except Exception:
                             data = {"command": raw}
+                        # Handle RPC-style requests first
+                        if isinstance(data, dict) and data.get("type") == "stats_request":
+                            req_id = data.get("request_id")
+                            # Build directory listing from current_agent_dir
+                            dir_path = current_agent_dir
+                            try:
+                                items = []
+                                for name in os.listdir(dir_path):
+                                    full = os.path.join(dir_path, name)
+                                    try:
+                                        st = os.stat(full)
+                                        items.append({
+                                            "name": name,
+                                            "is_dir": os.path.isdir(full),
+                                            "size": int(st.st_size),
+                                            "modified": int(st.st_mtime),
+                                        })
+                                    except Exception:
+                                        items.append({"name": name, "is_dir": os.path.isdir(full)})
+                                payload = {"type": "stats_response", "request_id": req_id, "data": {"current_dir": dir_path, "files": items}}
+                            except Exception as e:
+                                payload = {"type": "stats_response", "request_id": req_id, "error": f"Stats failed: {e}"}
+                            try:
+                                await ws.send(json.dumps(payload))
+                            except Exception:
+                                pass
+                            continue
                         cmd = data.get("command")
                         if cmd:
                             await enqueue_command(ws, cmd)
