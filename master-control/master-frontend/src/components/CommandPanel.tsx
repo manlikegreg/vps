@@ -3,6 +3,8 @@ import { dashboardSocket } from '../utils/socket'
 
 type Agent = { agent_id: string; name: string }
 
+import CommandSnippets from './CommandSnippets'
+
 export default function CommandPanel() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [selected, setSelected] = useState<Record<string, boolean>>({})
@@ -57,6 +59,9 @@ export default function CommandPanel() {
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
             <button className="btn" onClick={runOnSelected} disabled={selectedIds.length === 0 || !command.trim()}>Run on Selected</button>
             <button className="btn" onClick={runOnAll} disabled={agents.length === 0 || !command.trim()}>Run on All</button>
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <CommandSnippets onInsert={setCommand} />
           </div>
         </div>
         <div style={{ width: 320, maxHeight: 160, overflow: 'auto', borderLeft: '1px solid #222', paddingLeft: 10 }}>

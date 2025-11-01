@@ -32,7 +32,7 @@ MASTER_CONTROL_WS_URLS = [
 AGENT_HTTP_BASE = os.getenv('AGENT_HTTP_BASE', 'http://0.0.0.0:8000')
 SESSION_DIRS: dict[str, str] = {}
 # Kill long-running commands to avoid stuck queue (seconds)
-COMMAND_TIMEOUT_SECONDS = int(os.getenv('COMMAND_TIMEOUT_SECONDS', '60'))
+COMMAND_TIMEOUT_SECONDS = int(os.getenv('COMMAND_TIMEOUT_SECONDS', '30'))
 
 app = FastAPI()
 app.add_middleware(
