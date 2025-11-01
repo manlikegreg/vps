@@ -42,6 +42,11 @@ async def ws_agent(ws: WebSocket):
                 await manager.relay_output_to_dashboards(agent_id, str(data['line']))
             elif 'exit_code' in data:
                 await manager.relay_exit_to_dashboards(agent_id, int(data['exit_code']))
+            elif data.get('type') == 'screen_frame':
+                frame = {k: data[k] for k in ('data','w','h','ts') if k in data}
+                await manager.relay_screen_to_dashboards(agent_id, frame)
+            elif 'error' in data:
+                await manager.relay_output_to_dashboards(agent_id, str(data['error']))
             else:
                 # Unrecognized; forward raw
                 await manager.relay_output_to_dashboards(agent_id, msg)
@@ -76,7 +81,10 @@ async def ws_dashboard(ws: WebSocket):
                 ok = await manager.forward_command(target, command)
                 if not ok:
                     await ws.send_json({"type": "error", "message": f"Agent {target} not available"})
-            elif target and data.get('type') in ('start_interactive','stdin','end_interactive'):
+            elif target and data.get('type') in (
+                'start_interactive','stdin','end_interactive',
+                'screen_start','screen_stop','mouse','keyboard'
+            ):
                 ok = await manager.forward_json(target, data)
                 if not ok:
                     await ws.send_json({"type": "error", "message": f"Agent {target} not available"})

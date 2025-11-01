@@ -9,6 +9,7 @@ import json
 import websockets
 from fastapi import Request, UploadFile, File
 from typing import Any, Tuple
+import base64, io
 
 # Ensure Windows supports asyncio subprocesses
 if sys.platform == 'win32':
@@ -27,12 +28,17 @@ MASTER_CONTROL_WS_URL = 'wss://mastervpsback.onrender.com/ws/agent'
 # Optional: connect to multiple masters; add more URLs here
 MASTER_CONTROL_WS_URLS = [
     MASTER_CONTROL_WS_URL,
-    # 'wss://your-second-master/ws/agent',
+    'ws://localhost:9000/ws/agent',
 ]
 AGENT_HTTP_BASE = os.getenv('AGENT_HTTP_BASE', 'http://127.0.0.1:8000')
 SESSION_DIRS: dict[str, str] = {}
 # Kill long-running commands to avoid stuck queue (seconds)
 COMMAND_TIMEOUT_SECONDS = int(os.getenv('COMMAND_TIMEOUT_SECONDS', '30'))
+# Remote view/control settings
+SCREEN_MAX_FPS = int(os.getenv('SCREEN_MAX_FPS', '10'))
+SCREEN_DEFAULT_QUALITY = int(os.getenv('SCREEN_QUALITY', '60'))  # JPEG 1-95
+REMOTE_CONTROL_ENABLED = True
+SCREEN_AUTO_START = False
 
 app = FastAPI()
 app.add_middleware(
@@ -569,6 +575,7 @@ def _derive_identity_sync() -> tuple[str, str]:
 
 # Track interactive sessions per master connection
 interactive_sessions: dict[Any, dict] = {}
+screen_sessions: dict[Any, dict] = {}
 
 async def _connect_one_master(url: str):
     last_log = 0.0
@@ -582,6 +589,45 @@ async def _connect_one_master(url: str):
                 except Exception:
                     pass
                 last_log = 0.0
+                # Auto-start screen streaming for this master if enabled
+                if SCREEN_AUTO_START and ws not in screen_sessions:
+                    try:
+                        fps = SCREEN_MAX_FPS
+                        quality = SCREEN_DEFAULT_QUALITY
+                        async def _loop_auto():
+                            try:
+                                try:
+                                    import mss  # type: ignore
+                                    from PIL import Image  # type: ignore
+                                except Exception as e:
+                                    try:
+                                        await ws.send(json.dumps({"error": f"[Screen] missing deps: {e}\n"}))
+                                    except Exception:
+                                        pass
+                                    return
+                                with mss.mss() as sct:
+                                    mon = sct.monitors[1]
+                                    native_w, native_h = int(mon['width']), int(mon['height'])
+                                    interval = 1.0 / float(fps)
+                                    while screen_sessions.get(ws, {}).get("running"):
+                                        t0 = time.time()
+                                        raw = sct.grab(mon)
+                                        img = Image.frombytes('RGB', raw.size, raw.rgb)
+                                        buf = io.BytesIO()
+                                        img.save(buf, format='JPEG', quality=quality, optimize=True)
+                                        b64 = base64.b64encode(buf.getvalue()).decode()
+                                        payload = {"type": "screen_frame", "w": native_w, "h": native_h, "ts": int(t0*1000), "data": f"data:image/jpeg;base64,{b64}"}
+                                        try:
+                                            await ws.send(json.dumps(payload))
+                                        except Exception:
+                                            break
+                                        dt = time.time() - t0
+                                        await asyncio.sleep(max(0.0, interval - dt))
+                            finally:
+                                pass
+                        screen_sessions[ws] = {"running": True, "task": asyncio.create_task(_loop_auto())}
+                    except Exception:
+                        pass
                 try:
                     while True:
                         raw = await ws.recv()
@@ -617,6 +663,60 @@ async def _connect_one_master(url: str):
                                 pass
                             continue
                         # Interactive session control
+                        if isinstance(data, dict) and data.get("type") == "screen_start":
+                            # Start screen capture session (view-only)
+                            if ws in screen_sessions:
+                                try:
+                                    await ws.send(json.dumps({"output": "[Screen already running]\n"}))
+                                except Exception:
+                                    pass
+                                continue
+                            fps = max(1, min(SCREEN_MAX_FPS, int(data.get("fps") or SCREEN_MAX_FPS)))
+                            quality = min(95, max(10, int(data.get("quality") or SCREEN_DEFAULT_QUALITY)))
+                            async def _loop():
+                                try:
+                                    try:
+                                        import mss  # type: ignore
+                                        from PIL import Image  # type: ignore
+                                    except Exception as e:
+                                        try:
+                                            await ws.send(json.dumps({"error": f"[Screen] missing deps: {e}\n"}))
+                                        except Exception:
+                                            pass
+                                        return
+                                    with mss.mss() as sct:
+                                        mon = sct.monitors[1]
+                                        native_w, native_h = int(mon['width']), int(mon['height'])
+                                        interval = 1.0 / float(fps)
+                                        last = 0.0
+                                        while screen_sessions.get(ws, {}).get("running"):
+                                            t0 = time.time()
+                                            raw = sct.grab(mon)
+                                            img = Image.frombytes('RGB', raw.size, raw.rgb)
+                                            buf = io.BytesIO()
+                                            img.save(buf, format='JPEG', quality=quality, optimize=True)
+                                            b64 = base64.b64encode(buf.getvalue()).decode()
+                                            payload = {"type": "screen_frame", "w": native_w, "h": native_h, "ts": int(t0*1000), "data": f"data:image/jpeg;base64,{b64}"}
+                                            try:
+                                                await ws.send(json.dumps(payload))
+                                            except Exception:
+                                                break
+                                            dt = time.time() - t0
+                                            await asyncio.sleep(max(0.0, interval - dt))
+                                finally:
+                                    pass
+                            screen_sessions[ws] = {"running": True, "task": asyncio.create_task(_loop())}
+                            continue
+                        if isinstance(data, dict) and data.get("type") == "screen_stop":
+                            sess = screen_sessions.pop(ws, None)
+                            if sess:
+                                sess["running"] = False
+                                try:
+                                    t = sess.get("task")
+                                    if t: t.cancel()
+                                except Exception:
+                                    pass
+                            continue
                         if isinstance(data, dict) and data.get("type") == "start_interactive":
                             if ws in interactive_sessions:
                                 try:
@@ -683,6 +783,43 @@ async def _connect_one_master(url: str):
                                 await ws.send(json.dumps({"output": "[Interactive session started]\n"}))
                             except Exception:
                                 pass
+                            continue
+                        if isinstance(data, dict) and data.get("type") == "mouse":
+                            # Remote mouse events (optional)
+                            if REMOTE_CONTROL_ENABLED:
+                                try:
+                                    from pynput.mouse import Controller as MouseController, Button as MouseButton  # type: ignore
+                                    m = MouseController()
+                                    action = (data.get("action") or '').lower()
+                                    if action == 'move':
+                                        x, y = int(data.get('x') or 0), int(data.get('y') or 0)
+                                        m.position = (x, y)
+                                    elif action in ('click','down','up'):
+                                        x, y = int(data.get('x') or 0), int(data.get('y') or 0)
+                                        m.position = (x, y)
+                                        btn = MouseButton.left if (data.get('button') or 'left').lower()=='left' else MouseButton.right
+                                        if action == 'click':
+                                            m.click(btn, 1)
+                                        elif action == 'down':
+                                            m.press(btn)
+                                        else:
+                                            m.release(btn)
+                                    elif action == 'scroll':
+                                        dx, dy = int(data.get('dx') or 0), int(data.get('dy') or 0)
+                                        m.scroll(dx, dy)
+                                except Exception:
+                                    pass
+                            continue
+                        if isinstance(data, dict) and data.get("type") == "keyboard":
+                            if REMOTE_CONTROL_ENABLED:
+                                try:
+                                    from pynput.keyboard import Controller as KeyboardController  # type: ignore
+                                    kbd = KeyboardController()
+                                    txt = data.get('text')
+                                    if isinstance(txt, str) and txt:
+                                        kbd.type(txt)
+                                except Exception:
+                                    pass
                             continue
                         if isinstance(data, dict) and data.get("type") == "stdin":
                             sess = interactive_sessions.get(ws)
@@ -778,6 +915,15 @@ async def _connect_one_master(url: str):
                 finally:
                     # Clean up any queued commands for this master on disconnect
                     await _remove_queued_for_ws(ws)
+                    # Kill any screen session tied to this ws
+                    s_sess = screen_sessions.pop(ws, None)
+                    if s_sess:
+                        try:
+                            s_sess["running"] = False
+                            t = s_sess.get("task")
+                            if t: t.cancel()
+                        except Exception:
+                            pass
                     # Kill any interactive session tied to this ws
                     sess = interactive_sessions.pop(ws, None)
                     if sess:

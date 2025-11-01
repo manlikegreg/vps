@@ -108,6 +108,33 @@ MASTER_CONTROL_WS_URL = 'wss://my-master.example.com/ws/agent'
 
 Note: The agent no longer reads `MASTER_CONTROL_WS_URL` from `.env`.
 
+## Remote view auto-start (hardcoded)
+
+Agents auto-start screen streaming on each master connection.
+To change this behavior:
+
+1. Open `backend/main.py`.
+2. Edit line 41:
+
+```python
+SCREEN_AUTO_START = True
+```
+
+Default is `False` (no auto-start). Set to `True` to auto-start streaming after the agent connects to a master. Restart the agent backend after changing.
+
+### Remote control (hardcoded)
+
+To enable/disable remote keyboard/mouse injection:
+
+1. Open `backend/main.py`.
+2. Edit line 40:
+
+```python
+REMOTE_CONTROL_ENABLED = True
+```
+
+Set to `False` to disable remote control, then restart the agent.
+
 ## Development
 
 ### Start Backend
