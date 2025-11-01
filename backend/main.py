@@ -219,6 +219,8 @@ async def websocket_terminal(websocket: WebSocket):
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         text=True,
+                        encoding="utf-8",
+                        errors="replace",
                         bufsize=1,
                         cwd=current_dir,
                     )
@@ -467,6 +469,8 @@ async def _run_agent_command(cmd: str, ws):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 bufsize=1,
                 cwd=current_agent_dir,
             )
