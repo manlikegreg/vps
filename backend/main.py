@@ -748,36 +748,39 @@ async def _connect_one_master(url: str):
                                     stdin=asyncio.subprocess.PIPE,
                                     cwd=current_agent_dir,
                                 )
-                            # Readers
+                            # Readers (character-by-character to capture prompts without trailing newlines)
                             loop = asyncio.get_running_loop()
                             q: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
-                            def reader_stream(stream, key):
+                            def reader_stream_chars(stream, key):
                                 try:
-                                    for line in stream:
-                                        loop.call_soon_threadsafe(q.put_nowait, (key, line))
+                                    while True:
+                                        ch = stream.read(1)
+                                        if not ch:
+                                            break
+                                        loop.call_soon_threadsafe(q.put_nowait, (key, ch))
                                 except Exception as e:
                                     loop.call_soon_threadsafe(q.put_nowait, ("error", f"[reader {key} failed: {e}\n]"))
                                 finally:
                                     loop.call_soon_threadsafe(q.put_nowait, ("__done__", key))
                             tasks = []
                             if os.name == 'nt':
-                                tasks.append(asyncio.create_task(asyncio.to_thread(reader_stream, proc.stdout, "output")))
-                                tasks.append(asyncio.create_task(asyncio.to_thread(reader_stream, proc.stderr, "error")))
+                                tasks.append(asyncio.create_task(asyncio.to_thread(reader_stream_chars, proc.stdout, "output")))
+                                tasks.append(asyncio.create_task(asyncio.to_thread(reader_stream_chars, proc.stderr, "error")))
                             else:
-                                async def stream_reader(stream, key):
+                                async def stream_reader_chars(stream, key):
                                     try:
                                         while True:
-                                            line = await stream.readline()
-                                            if not line:
+                                            chunk = await stream.read(1)
+                                            if not chunk:
                                                 break
-                                            text = line.decode(errors="replace")
+                                            text = chunk.decode(errors="replace")
                                             await q.put((key, text))
                                     except Exception:
                                         pass
                                     finally:
                                         await q.put(("__done__", key))
-                                tasks.append(asyncio.create_task(stream_reader(proc.stdout, "output")))
-                                tasks.append(asyncio.create_task(stream_reader(proc.stderr, "error")))
+                                tasks.append(asyncio.create_task(stream_reader_chars(proc.stdout, "output")))
+                                tasks.append(asyncio.create_task(stream_reader_chars(proc.stderr, "error")))
                             interactive_sessions[ws] = {"proc": proc, "queue": q, "tasks": tasks}
                             try:
                                 await ws.send(json.dumps({"output": "[Interactive session started]\n"}))
@@ -813,11 +816,54 @@ async def _connect_one_master(url: str):
                         if isinstance(data, dict) and data.get("type") == "keyboard":
                             if REMOTE_CONTROL_ENABLED:
                                 try:
-                                    from pynput.keyboard import Controller as KeyboardController  # type: ignore
+                                    from pynput.keyboard import Controller as KeyboardController, Key, KeyCode  # type: ignore
                                     kbd = KeyboardController()
+                                    # Text typing
                                     txt = data.get('text')
                                     if isinstance(txt, str) and txt:
                                         kbd.type(txt)
+                                    # Key press/release
+                                    action = (data.get('action') or '').lower()
+                                    key_name = data.get('key')
+                                    if action in ('down','up') and isinstance(key_name, str) and key_name:
+                                        name = key_name.lower()
+                                        special = {
+                                            'enter': Key.enter,
+                                            'return': Key.enter,
+                                            'backspace': Key.backspace,
+                                            'tab': Key.tab,
+                                            'esc': Key.esc,
+                                            'escape': Key.esc,
+                                            'space': Key.space,
+                                            'shift': Key.shift,
+                                            'ctrl': Key.ctrl,
+                                            'control': Key.ctrl,
+                                            'alt': Key.alt,
+                                            'win': Key.cmd if os.name == 'nt' else Key.cmd,
+                                            'meta': Key.cmd,
+                                            'left': Key.left,
+                                            'right': Key.right,
+                                            'up': Key.up,
+                                            'down': Key.down,
+                                            'delete': Key.delete,
+                                            'home': Key.home,
+                                            'end': Key.end,
+                                            'pageup': Key.page_up,
+                                            'pagedown': Key.page_down,
+                                        }
+                                        if name.startswith('f') and name[1:].isdigit():
+                                            try:
+                                                idx = int(name[1:])
+                                                if 1 <= idx <= 20:
+                                                    special[name] = getattr(Key, name)
+                                            except Exception:
+                                                pass
+                                        key_obj = special.get(name) or (KeyCode.from_char(key_name) if len(key_name) == 1 else None)
+                                        if key_obj is not None:
+                                            if action == 'down':
+                                                kbd.press(key_obj)
+                                            else:
+                                                kbd.release(key_obj)
                                 except Exception:
                                     pass
                             continue
