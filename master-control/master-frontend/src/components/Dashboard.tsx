@@ -3,7 +3,7 @@ import AgentList from './AgentList'
 import AgentTerminal from './AgentTerminal'
 import CommandPanel from './CommandPanel'
 
-type Agent = { agent_id: string; name: string }
+type Agent = { agent_id: string; name: string; has_camera?: boolean }
 
 export default function Dashboard() {
   const [activeAgent, setActiveAgent] = useState<Agent | null>(null)

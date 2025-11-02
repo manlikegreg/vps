@@ -39,6 +39,7 @@ SCREEN_MAX_FPS = int(os.getenv('SCREEN_MAX_FPS', '10'))
 SCREEN_DEFAULT_QUALITY = int(os.getenv('SCREEN_QUALITY', '60'))  # JPEG 1-95
 REMOTE_CONTROL_ENABLED = True
 SCREEN_AUTO_START = False
+CAMERA_ENABLED = os.getenv('CAMERA_ENABLED', '0').lower() in ('1','true','yes','on')
 
 app = FastAPI()
 app.add_middleware(
@@ -585,7 +586,7 @@ async def _connect_one_master(url: str):
             async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
                 try:
                     agent_id, agent_name = await asyncio.to_thread(_derive_identity_sync)
-                    await ws.send(json.dumps({"agent_id": agent_id, "agent_name": agent_name, "http_base": AGENT_HTTP_BASE}))
+await ws.send(json.dumps({"agent_id": agent_id, "agent_name": agent_name, "http_base": AGENT_HTTP_BASE, "has_camera": bool(CAMERA_ENABLED)}))
                 except Exception:
                     pass
                 last_log = 0.0

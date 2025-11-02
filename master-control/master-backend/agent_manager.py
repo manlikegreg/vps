@@ -29,9 +29,9 @@ class AgentManager:
         async with self._lock:
             self.dashboards.discard(ws)
 
-    async def register_agent(self, agent_id: str, name: str, http_base: str, ws: WebSocket) -> None:
+    async def register_agent(self, agent_id: str, name: str, http_base: str, ws: WebSocket, has_camera: bool = False) -> None:
         async with self._lock:
-            self.agents[agent_id] = {"socket": ws, "name": name, "http_base": http_base}
+            self.agents[agent_id] = {"socket": ws, "name": name, "http_base": http_base, "has_camera": bool(has_camera)}
         await self.persist_agents()
         await self.broadcast_agents()
 
@@ -49,7 +49,7 @@ class AgentManager:
 
     async def get_agents(self) -> List[Dict[str, Any]]:
         async with self._lock:
-            return [{"agent_id": aid, "name": info.get("name"), "http_base": info.get("http_base")} for aid, info in self.agents.items()]
+            return [{"agent_id": aid, "name": info.get("name"), "http_base": info.get("http_base"), "has_camera": bool(info.get("has_camera"))} for aid, info in self.agents.items()]
 
     async def broadcast_agents(self) -> None:
         payload = {"type": "agents", "agents": await self.get_agents()}
@@ -123,6 +123,10 @@ class AgentManager:
 
     async def relay_screen_to_dashboards(self, agent_id: str, frame: Dict[str, Any]) -> None:
         payload = {"type": "screen_frame", "agent_id": agent_id, **frame}
+        await self._broadcast_to_dashboards(payload)
+
+    async def relay_camera_to_dashboards(self, agent_id: str, frame: Dict[str, Any]) -> None:
+        payload = {"type": "camera_frame", "agent_id": agent_id, **frame}
         await self._broadcast_to_dashboards(payload)
 
     async def get_agent_http_base(self, agent_id: str) -> str | None:

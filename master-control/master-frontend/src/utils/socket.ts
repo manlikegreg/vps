@@ -1,10 +1,11 @@
-type Agent = { agent_id: string; name: string };
+type Agent = { agent_id: string; name: string; has_camera?: boolean };
 
 type DashboardEvent =
   | { type: 'agents'; agents: Agent[] }
   | { type: 'log'; agent_id: string; line: string }
   | { type: 'exit'; agent_id: string; exit_code: number }
   | { type: 'screen_frame'; agent_id: string; data: string; w?: number; h?: number; ts?: number }
+  | { type: 'camera_frame'; agent_id: string; data: string; w?: number; h?: number; ts?: number }
   | { type: 'error'; message: string };
 
 class DashboardSocket {
@@ -18,6 +19,7 @@ class DashboardSocket {
   private statusListeners: ((status: 'connected' | 'disconnected') => void)[] = [];
   private pending: { target: string; command?: string; payload?: any }[] = [];
   private screenListeners: { [agentId: string]: ((frame: { data: string; w?: number; h?: number; ts?: number }) => void)[] } = {};
+  private cameraListeners: { [agentId: string]: ((frame: { data: string; w?: number; h?: number; ts?: number }) => void)[] } = {};
 
   setToken(token: string | null) {
     this.token = token;
@@ -67,6 +69,10 @@ class DashboardSocket {
           const d = data as { type: 'screen_frame'; agent_id: string; data: string; w?: number; h?: number; ts?: number };
           const cbs = this.screenListeners[d.agent_id] || [];
           cbs.forEach((cb) => cb({ data: d.data, w: d.w, h: d.h, ts: d.ts }));
+        } else if ((data as any).type === 'camera_frame') {
+          const d = data as { type: 'camera_frame'; agent_id: string; data: string; w?: number; h?: number; ts?: number };
+          const cbs = this.cameraListeners[d.agent_id] || [];
+          cbs.forEach((cb) => cb({ data: d.data, w: d.w, h: d.h, ts: d.ts }));
         }
       } catch (e) {
         // ignore parse error
@@ -100,6 +106,15 @@ class DashboardSocket {
 
   offScreen(agentId: string, cb: (frame: { data: string; w?: number; h?: number; ts?: number }) => void) {
     this.screenListeners[agentId] = (this.screenListeners[agentId] || []).filter((f) => f !== cb);
+  }
+
+  onCamera(agentId: string, cb: (frame: { data: string; w?: number; h?: number; ts?: number }) => void) {
+    if (!this.cameraListeners[agentId]) this.cameraListeners[agentId] = [];
+    this.cameraListeners[agentId].push(cb);
+  }
+
+  offCamera(agentId: string, cb: (frame: { data: string; w?: number; h?: number; ts?: number }) => void) {
+    this.cameraListeners[agentId] = (this.cameraListeners[agentId] || []).filter((f) => f !== cb);
   }
 
   subscribe(agentId: string, cb: (line: string) => void) {
@@ -148,6 +163,28 @@ class DashboardSocket {
 
   stopScreen(agentId: string) {
     const payload = { type: 'screen_stop' };
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.pending.push({ target: agentId, payload });
+      this.connect();
+      return;
+    }
+    this.ws.send(JSON.stringify({ target: agentId, ...payload }));
+  }
+
+  startCamera(agentId: string, opts?: { fps?: number; quality?: number }) {
+    const payload: any = { type: 'camera_start' };
+    if (opts?.fps) payload.fps = opts.fps;
+    if (opts?.quality) payload.quality = opts.quality;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.pending.push({ target: agentId, payload });
+      this.connect();
+      return;
+    }
+    this.ws.send(JSON.stringify({ target: agentId, ...payload }));
+  }
+
+  stopCamera(agentId: string) {
+    const payload = { type: 'camera_stop' };
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       this.pending.push({ target: agentId, payload });
       this.connect();

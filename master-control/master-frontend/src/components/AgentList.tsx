@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { dashboardSocket } from '../utils/socket'
 
-type Agent = { agent_id: string; name: string }
+type Agent = { agent_id: string; name: string; has_camera?: boolean }
 
 type Props = {
   onOpenTerminal: (agent: Agent) => void

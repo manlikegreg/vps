@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { dashboardSocket } from '../utils/socket'
 import RemoteView from './RemoteView'
+import CameraView from './CameraView'
 
 type Agent = { agent_id: string; name: string }
 
@@ -223,7 +224,14 @@ export default function AgentTerminal({ agent, onClose }: Props) {
           <div style={{ color: '#888', fontSize: 12, marginTop: 6 }}>(No items)</div>
         )}
       </div>
-      <RemoteView agentId={agent.agent_id} agentName={agent.name} />
+      <div style={{ display: 'flex', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 420 }}>
+          <RemoteView agentId={agent.agent_id} agentName={agent.name} />
+        </div>
+        <div style={{ flex: 1, minWidth: 420 }}>
+          <CameraView agentId={agent.agent_id} enabled={(agent as any).has_camera === true} />
+        </div>
+      </div>
     </div>
   )
 }
