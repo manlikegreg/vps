@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { dashboardSocket } from '../utils/socket'
+import RemoteView from './RemoteView'
 
 type Agent = { agent_id: string; name: string }
 
@@ -204,7 +205,7 @@ export default function AgentTerminal({ agent, onClose }: Props) {
             </div>
           </>
           {files.map((f, i) => (
-            <>
+            <div key={`${f.name}-${i}`} style={{ display: 'contents' }}>
               <div style={{ color: f.is_dir ? '#9efc9e' : '#ddd', cursor: f.is_dir ? 'pointer' : 'default' }} onClick={() => f.is_dir && cdTo(f.name)}>{f.name}</div>
               <div style={{ color: '#888', fontSize: 12 }}>{f.is_dir ? 'dir' : (f.size ?? 0) + ' B'}</div>
               <div style={{ color: '#666', fontSize: 12 }}>{f.modified ? new Date(f.modified * 1000).toLocaleString() : ''}</div>
@@ -215,13 +216,14 @@ export default function AgentTerminal({ agent, onClose }: Props) {
                   <button className="btn secondary" onClick={() => cdTo(f.name)}>Open</button>
                 )}
               </div>
-            </>
+            </div>
           ))}
         </div>
         {files.length === 0 && (
           <div style={{ color: '#888', fontSize: 12, marginTop: 6 }}>(No items)</div>
         )}
       </div>
+      <RemoteView agentId={agent.agent_id} agentName={agent.name} />
     </div>
   )
 }

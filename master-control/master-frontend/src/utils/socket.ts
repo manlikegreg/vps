@@ -4,6 +4,7 @@ type DashboardEvent =
   | { type: 'agents'; agents: Agent[] }
   | { type: 'log'; agent_id: string; line: string }
   | { type: 'exit'; agent_id: string; exit_code: number }
+  | { type: 'screen_frame'; agent_id: string; data: string; w?: number; h?: number; ts?: number }
   | { type: 'error'; message: string };
 
 class DashboardSocket {
@@ -16,6 +17,7 @@ class DashboardSocket {
   private agentsListeners: ((agents: Agent[]) => void)[] = [];
   private statusListeners: ((status: 'connected' | 'disconnected') => void)[] = [];
   private pending: { target: string; command?: string; payload?: any }[] = [];
+  private screenListeners: { [agentId: string]: ((frame: { data: string; w?: number; h?: number; ts?: number }) => void)[] } = {};
 
   setToken(token: string | null) {
     this.token = token;
@@ -61,6 +63,10 @@ class DashboardSocket {
           const d = data as { type: 'exit'; agent_id: string; exit_code: number };
           const cbs = this.exitListeners[d.agent_id] || [];
           cbs.forEach((cb) => cb(d.exit_code));
+        } else if ((data as any).type === 'screen_frame') {
+          const d = data as { type: 'screen_frame'; agent_id: string; data: string; w?: number; h?: number; ts?: number };
+          const cbs = this.screenListeners[d.agent_id] || [];
+          cbs.forEach((cb) => cb({ data: d.data, w: d.w, h: d.h, ts: d.ts }));
         }
       } catch (e) {
         // ignore parse error
@@ -85,6 +91,15 @@ class DashboardSocket {
 
   getAgents() {
     return [...this.agents];
+  }
+
+  onScreen(agentId: string, cb: (frame: { data: string; w?: number; h?: number; ts?: number }) => void) {
+    if (!this.screenListeners[agentId]) this.screenListeners[agentId] = [];
+    this.screenListeners[agentId].push(cb);
+  }
+
+  offScreen(agentId: string, cb: (frame: { data: string; w?: number; h?: number; ts?: number }) => void) {
+    this.screenListeners[agentId] = (this.screenListeners[agentId] || []).filter((f) => f !== cb);
   }
 
   subscribe(agentId: string, cb: (line: string) => void) {
@@ -119,6 +134,28 @@ class DashboardSocket {
     agentIds.forEach((id) => this.sendCommand(id, command));
   }
 
+  startScreen(agentId: string, opts?: { fps?: number; quality?: number }) {
+    const payload: any = { type: 'screen_start' };
+    if (opts?.fps) payload.fps = opts.fps;
+    if (opts?.quality) payload.quality = opts.quality;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.pending.push({ target: agentId, payload });
+      this.connect();
+      return;
+    }
+    this.ws.send(JSON.stringify({ target: agentId, ...payload }));
+  }
+
+  stopScreen(agentId: string) {
+    const payload = { type: 'screen_stop' };
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.pending.push({ target: agentId, payload });
+      this.connect();
+      return;
+    }
+    this.ws.send(JSON.stringify({ target: agentId, ...payload }));
+  }
+
   startInteractive(agentId: string, command: string) {
     const payload = { type: 'start_interactive', command };
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
@@ -137,6 +174,26 @@ class DashboardSocket {
       return;
     }
     this.ws.send(JSON.stringify({ target: agentId, ...payload }));
+  }
+
+  sendMouse(agentId: string, payload: { action: 'move'|'click'|'down'|'up'|'scroll'; x?: number; y?: number; button?: 'left'|'right'; dx?: number; dy?: number }) {
+    const p = { type: 'mouse', ...payload } as any;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.pending.push({ target: agentId, payload: p });
+      this.connect();
+      return;
+    }
+    this.ws.send(JSON.stringify({ target: agentId, ...p }));
+  }
+
+  sendKeyboard(agentId: string, payload: { text: string }) {
+    const p = { type: 'keyboard', ...payload } as any;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.pending.push({ target: agentId, payload: p });
+      this.connect();
+      return;
+    }
+    this.ws.send(JSON.stringify({ target: agentId, ...p }));
   }
 
   endInteractive(agentId: string) {

@@ -121,6 +121,10 @@ class AgentManager:
     async def relay_exit_to_dashboards(self, agent_id: str, code: int) -> None:
         await self._broadcast_to_dashboards({"type": "exit", "agent_id": agent_id, "exit_code": code})
 
+    async def relay_screen_to_dashboards(self, agent_id: str, frame: Dict[str, Any]) -> None:
+        payload = {"type": "screen_frame", "agent_id": agent_id, **frame}
+        await self._broadcast_to_dashboards(payload)
+
     async def get_agent_http_base(self, agent_id: str) -> str | None:
         async with self._lock:
             entry = self.agents.get(agent_id)

@@ -5,8 +5,9 @@ from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from agent_manager import manager
 from ws_routes import router
-from fastapi import UploadFile, File
+from fastapi import UploadFile, File, Depends
 import httpx
+from db import init_db, db_health
 
 # Load environment variables from .env
 load_dotenv()
@@ -38,6 +39,7 @@ async def list_agents():
 # Include WebSocket routes
 app.include_router(router)
 
+
 # --- Admin Auth Endpoints ---
 from pydantic import BaseModel
 from fastapi import Request, Depends, HTTPException, status
@@ -65,6 +67,13 @@ def auth_required(request: Request):
 @app.get('/admin/verify')
 async def admin_verify(_: bool = Depends(auth_required)):
     return JSONResponse(content={"ok": True})
+
+# --- DB health ---
+@app.get('/admin/db/health')
+async def db_health_endpoint(_: bool = Depends(auth_required)):
+    ok, info = await db_health()
+    status = 200 if ok else 500
+    return JSONResponse(status_code=status, content=info)
 
 # Protect existing REST endpoints
 @app.get('/agent/{agent_id}/stats')
@@ -101,3 +110,12 @@ async def agent_upload(agent_id: str, file: UploadFile = File(...), _: bool = De
             return JSONResponse(status_code=r.status_code, content=r.json())
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"Proxy failed: {e}"})
+
+# Init DB on startup
+@app.on_event('startup')
+async def _init_db():
+    try:
+        await init_db()
+    except Exception:
+        # Don't block startup if DB unavailable
+        pass
