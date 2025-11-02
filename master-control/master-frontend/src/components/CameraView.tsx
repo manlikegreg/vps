@@ -3,12 +3,11 @@ import { dashboardSocket } from '../utils/socket'
 import { savePhoto, saveVideo } from '../utils/cameraMedia'
 import CameraMediaPanel from './CameraMediaPanel'
 
-export default function CameraView({ agentId, enabled, onStarted, onStopped }: { agentId: string; enabled: boolean; onStarted?: () => void; onStopped?: () => void }) {
+export default function CameraView({ agentId, agentName, enabled, onStarted, onStopped }: { agentId: string; agentName: string; enabled: boolean; onStarted?: () => void; onStopped?: () => void }) {
   const [frame, setFrame] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   const [recording, setRecording] = useState(false)
   const [showPanel, setShowPanel] = useState(false)
-  const [agentName, setAgentName] = useState('')
   const canvasRef = useState<HTMLCanvasElement | null>(null)[0] || null
   // Workaround: create canvas element on demand
   const getCanvas = () => {

@@ -3,7 +3,7 @@ import { dashboardSocket } from '../utils/socket'
 import RemoteView from './RemoteView'
 import CameraView from './CameraView'
 
-type Agent = { agent_id: string; name: string }
+type Agent = { agent_id: string; name: string; has_camera?: boolean }
 
 type Props = { agent: Agent; onClose: () => void }
 
@@ -20,6 +20,7 @@ export default function AgentTerminal({ agent, onClose }: Props) {
   const uploadRef = useRef<HTMLInputElement | null>(null)
   const lastCmdRef = useRef<string>('')
   const [interactive, setInteractive] = useState(false)
+  const [activeTab, setActiveTab] = useState<'remote' | 'camera'>('remote')
   const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || 'http://localhost:9000'
   const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
 
@@ -225,12 +226,12 @@ export default function AgentTerminal({ agent, onClose }: Props) {
         )}
       </div>
       <div style={{ borderBottom: '1px solid #222', display: 'flex', gap: 8, marginTop: 10 }}>
-        <button className={`btn ${interactive ? 'secondary' : ''}`} onClick={() => setInteractive(false)}>Remote View</button>
-        <button className="btn secondary" disabled={!((agent as any).has_camera === true)} onClick={() => setInteractive(true)}>Camera</button>
+        <button className={`btn ${activeTab === 'remote' ? '' : 'secondary'}`} onClick={() => setActiveTab('remote')}>Remote View</button>
+        <button className="btn secondary" disabled={!((agent as any).has_camera === true)} onClick={() => setActiveTab('camera')}>Camera</button>
       </div>
       <div style={{ marginTop: 10 }}>
-        {interactive ? (
-          <CameraView agentId={agent.agent_id} enabled={(agent as any).has_camera === true} onStarted={() => { /* stay on camera */ }} onStopped={() => { setInteractive(false) }} />
+        {activeTab === 'camera' ? (
+          <CameraView agentId={agent.agent_id} agentName={agent.name} enabled={(agent as any).has_camera === true} onStarted={() => { /* stay on camera */ }} onStopped={() => { setActiveTab('remote') }} />
         ) : (
           <RemoteView agentId={agent.agent_id} agentName={agent.name} />
         )}

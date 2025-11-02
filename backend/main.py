@@ -587,7 +587,7 @@ async def _connect_one_master(url: str):
             async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
                 try:
                     agent_id, agent_name = await asyncio.to_thread(_derive_identity_sync)
-await ws.send(json.dumps({"agent_id": agent_id, "agent_name": agent_name, "http_base": AGENT_HTTP_BASE, "has_camera": bool(CAMERA_ENABLED)}))
+                    await ws.send(json.dumps({"agent_id": agent_id, "agent_name": agent_name, "http_base": AGENT_HTTP_BASE, "has_camera": bool(CAMERA_ENABLED)}))
                 except Exception:
                     pass
                 last_log = 0.0
@@ -1097,3 +1097,6 @@ async def start_master_connections():
 @app.on_event("startup")
 async def _startup_connect_master():
     asyncio.create_task(start_master_connections())
+
+
+
