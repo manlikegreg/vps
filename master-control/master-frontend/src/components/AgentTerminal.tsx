@@ -224,13 +224,16 @@ export default function AgentTerminal({ agent, onClose }: Props) {
           <div style={{ color: '#888', fontSize: 12, marginTop: 6 }}>(No items)</div>
         )}
       </div>
-      <div style={{ display: 'flex', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 420 }}>
+      <div style={{ borderBottom: '1px solid #222', display: 'flex', gap: 8, marginTop: 10 }}>
+        <button className={`btn ${interactive ? 'secondary' : ''}`} onClick={() => setInteractive(false)}>Remote View</button>
+        <button className="btn secondary" disabled={!((agent as any).has_camera === true)} onClick={() => setInteractive(true)}>Camera</button>
+      </div>
+      <div style={{ marginTop: 10 }}>
+        {interactive ? (
+          <CameraView agentId={agent.agent_id} enabled={(agent as any).has_camera === true} onStarted={() => { /* stay on camera */ }} onStopped={() => { setInteractive(false) }} />
+        ) : (
           <RemoteView agentId={agent.agent_id} agentName={agent.name} />
-        </div>
-        <div style={{ flex: 1, minWidth: 420 }}>
-          <CameraView agentId={agent.agent_id} enabled={(agent as any).has_camera === true} />
-        </div>
+        )}
       </div>
     </div>
   )
