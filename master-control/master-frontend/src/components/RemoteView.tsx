@@ -77,6 +77,7 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
   const stopRecord = () => { try { recorderRef.current?.stop() } catch {} ; setRecording(false) }
 
   const handleClick = (e: React.MouseEvent) => {
+    // clicks handled via down/up; keep for single-click fallback
     if (!control || !imgRef.current || !nativeW || !nativeH) return
     const rect = imgRef.current.getBoundingClientRect()
     const x = e.clientX - rect.left
@@ -86,11 +87,92 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
     dashboardSocket.sendMouse(agentId, { action: 'click', x: realX, y: realY, button: e.button === 2 ? 'right' : 'left' })
   }
 
+  const onMouseDown = (e: React.MouseEvent<HTMLImageElement>) => {
+    if (!control || !imgRef.current || !nativeW || !nativeH) return
+    e.preventDefault()
+    const rect = imgRef.current.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    const realX = Math.round((x / rect.width) * nativeW)
+    const realY = Math.round((y / rect.height) * nativeH)
+    const button = e.button === 2 ? 'right' : 'left'
+    dashboardSocket.sendMouse(agentId, { action: 'down', x: realX, y: realY, button })
+  }
+
+  const onMouseUp = (e: React.MouseEvent<HTMLImageElement>) => {
+    if (!control || !imgRef.current || !nativeW || !nativeH) return
+    e.preventDefault()
+    const rect = imgRef.current.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    const realX = Math.round((x / rect.width) * nativeW)
+    const realY = Math.round((y / rect.height) * nativeH)
+    const button = e.button === 2 ? 'right' : 'left'
+    dashboardSocket.sendMouse(agentId, { action: 'up', x: realX, y: realY, button })
+  }
+
+  const onMouseMove = (e: React.MouseEvent<HTMLImageElement>) => {
+    if (!control || !imgRef.current || !nativeW || !nativeH) return
+    if ((e.buttons & 1) === 0 && (e.buttons & 2) === 0) return // only send while a button is held
+    const rect = imgRef.current.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    const realX = Math.round((x / rect.width) * nativeW)
+    const realY = Math.round((y / rect.height) * nativeH)
+    dashboardSocket.sendMouse(agentId, { action: 'move', x: realX, y: realY })
+  }
+
+  const onWheel = (e: React.WheelEvent<HTMLImageElement>) => {
+    if (!control) return
+    e.preventDefault()
+    const dy = Math.sign(e.deltaY) * -1 // invert to feel natural
+    dashboardSocket.sendMouse(agentId, { action: 'scroll', dx: 0, dy })
+  }
+
   const sendKeys = () => {
     const txt = window.prompt('Type text to send:')
     if (!txt) return
     dashboardSocket.sendKeyboard(agentId, { text: txt })
   }
+
+  // Keyboard listeners when control is enabled
+  useEffect(() => {
+    if (!control) return
+    const onDown = (e: KeyboardEvent) => {
+      if (e.target && (e.target as HTMLElement).closest('input,textarea')) return
+      e.preventDefault()
+      const key = e.key
+      if (key.length === 1 && !e.ctrlKey && !e.metaKey) {
+        dashboardSocket.sendKeyboard(agentId, { text: key })
+      } else {
+        const map: Record<string,string> = {
+          Enter: 'enter', Backspace: 'backspace', Tab: 'tab', Escape: 'escape', ' ': 'space',
+          ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Delete: 'delete', Home: 'home', End: 'end', PageUp: 'pageup', PageDown: 'pagedown',
+          Shift: 'shift', Control: 'ctrl', Alt: 'alt', Meta: 'meta',
+        }
+        const name = map[key] || key.toLowerCase()
+        dashboardSocket.sendKeyboard(agentId, { key: name, action: 'down' })
+      }
+    }
+    const onUp = (e: KeyboardEvent) => {
+      if (e.target && (e.target as HTMLElement).closest('input,textarea')) return
+      e.preventDefault()
+      const map: Record<string,string> = {
+        Enter: 'enter', Backspace: 'backspace', Tab: 'tab', Escape: 'escape', ' ': 'space',
+        ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Delete: 'delete', Home: 'home', End: 'end', PageUp: 'pageup', PageDown: 'pagedown',
+        Shift: 'shift', Control: 'ctrl', Alt: 'alt', Meta: 'meta',
+      }
+      const key = e.key
+      const name = map[key] || key.toLowerCase()
+      dashboardSocket.sendKeyboard(agentId, { key: name, action: 'up' })
+    }
+    window.addEventListener('keydown', onDown)
+    window.addEventListener('keyup', onUp)
+    return () => {
+      window.removeEventListener('keydown', onDown)
+      window.removeEventListener('keyup', onUp)
+    }
+  }, [control, agentId])
 
   return (
     <div className="card" style={{ marginTop: 10 }}>
@@ -124,7 +206,7 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
       </div>
       <div style={{ border: '1px solid #222', borderRadius: 6, background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: expanded ? 520 : 280, height: expanded ? 520 : 280 }}>
         {frame ? (
-          <img ref={imgRef} src={frame} style={{ maxWidth: '100%', width: '100%', height: '100%', objectFit: 'contain' }} onClick={handleClick} />
+          <img ref={imgRef} src={frame} style={{ maxWidth: '100%', width: '100%', height: '100%', objectFit: 'contain' }} onClick={handleClick} onMouseDown={onMouseDown} onMouseUp={onMouseUp} onMouseMove={onMouseMove} onWheel={onWheel} onContextMenu={(e) => { if (control) e.preventDefault() }} />
         ) : (
           <div style={{ color: '#777', padding: 20 }}>{running ? 'Waiting for frames...' : 'Not running'}</div>
         )}

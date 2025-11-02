@@ -186,7 +186,7 @@ class DashboardSocket {
     this.ws.send(JSON.stringify({ target: agentId, ...p }));
   }
 
-  sendKeyboard(agentId: string, payload: { text: string }) {
+  sendKeyboard(agentId: string, payload: { text?: string; key?: string; action?: 'down'|'up' }) {
     const p = { type: 'keyboard', ...payload } as any;
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       this.pending.push({ target: agentId, payload: p });
