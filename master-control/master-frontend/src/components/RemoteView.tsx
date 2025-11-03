@@ -203,12 +203,6 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
           </label>
           <button className="btn secondary" onClick={sendKeys} disabled={!control}>Send Keys</button>
           <button className="btn secondary" onClick={() => { const url = `${window.location.origin}/remote.html?agentId=${encodeURIComponent(agentId)}&agentName=${encodeURIComponent(agentName)}`; window.open(url, '_blank'); }}>Open in New Tab</button>
-          <input className="input" placeholder="Interactive command (e.g., python game.py)" value={icmd} onChange={(e) => setIcmd(e.target.value)} style={{ width: 260 }} />
-          {!iRunning ? (
-            <button className="btn" onClick={() => { if (!icmd.trim()) return; dashboardSocket.startInteractive(agentId, icmd); setIRunning(true) }}>Start Interactive</button>
-          ) : (
-            <button className="btn secondary" onClick={() => { dashboardSocket.endInteractive(agentId); setIRunning(false) }}>Stop Interactive</button>
-          )}
           {onClose && <button className="btn secondary" onClick={onClose}>Close</button>}
         </div>
       </div>
