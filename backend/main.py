@@ -835,16 +835,6 @@ async def _connect_one_master(url: str):
                                 pass
                             continue
 
-                        if isinstance(data, dict) and data.get("type") == "disconnect":
-                            try:
-                                await _send_line(ws, "output", "[Disconnect requested]\n")
-                            except Exception:
-                                pass
-                            try:
-                                await ws.close()
-                            except Exception:
-                                pass
-                            continue
 
                         if isinstance(data, dict) and data.get("type") == "camera_start":
                             if not CAMERA_ENABLED:

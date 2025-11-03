@@ -96,10 +96,6 @@ async def remove_blacklist(agent_id: str, _: bool = Depends(auth_required)):
     await manager.remove_blacklist(agent_id)
     return JSONResponse(content={"ok": True})
 
-@app.post('/admin/agents/{agent_id}/disconnect')
-async def disconnect_agent(agent_id: str, _: bool = Depends(auth_required)):
-    ok = await manager.forward_json(agent_id, {"type": "disconnect"})
-    return JSONResponse(content={"ok": bool(ok)})
 
 # Protect existing REST endpoints
 @app.get('/agent/{agent_id}/stats')

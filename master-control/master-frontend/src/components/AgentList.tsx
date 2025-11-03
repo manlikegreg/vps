@@ -38,10 +38,6 @@ export default function AgentList({ onOpenTerminal }: Props) {
     } catch {}
   }
 
-  const disconnectAgent = (agentId: string) => {
-    if (!confirm('Disconnect this agent?')) return
-    dashboardSocket.disconnect(agentId)
-  }
 
   return (
     <div className="card">
@@ -53,12 +49,11 @@ export default function AgentList({ onOpenTerminal }: Props) {
             <div key={a.agent_id} className="agent-item">
               <div>
                 <span className="status-dot" />
-                <span className="agent-name">{a.name}</span>
-                <div className="agent-id">{a.agent_id}</div>
+              <span className="agent-name">{a.name} {a.country_code ? (<span style={{ color: '#9efc9e', fontSize: 12 }}>({a.country_code})</span>) : null}</span>
+              <div className="agent-id">{a.agent_id}</div>
               </div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 <button className="btn" onClick={() => onOpenTerminal(a)}>Open Terminal</button>
-                <button className="btn secondary" onClick={() => disconnectAgent(a.agent_id)}>Disconnect</button>
                 {!isBlack ? (
                   <button className="btn secondary" onClick={() => { if (confirm('Blacklist this agent? It will be refused until whitelisted.')) toggleBlacklist(a.agent_id, true) }}>Blacklist</button>
                 ) : (

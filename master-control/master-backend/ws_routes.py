@@ -2,6 +2,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from agent_manager import manager
 import json
 from auth import verify_token
+import httpx
 
 router = APIRouter()
 
@@ -24,7 +25,24 @@ async def ws_agent(ws: WebSocket):
         if await manager.is_blacklisted(agent_id):
             await ws.close()
             return
-        await manager.register_agent(agent_id, agent_name, http_base, ws, has_camera)
+        # Geo lookup by client IP
+        try:
+            xff = ws.headers.get('x-forwarded-for') if hasattr(ws, 'headers') else None
+            ip = (xff.split(',')[0].strip() if xff else None) or (ws.client.host if ws.client else None)
+            country = None
+            country_code = None
+            if ip and ip not in ('127.0.0.1','::1'):
+                async with httpx.AsyncClient(timeout=4.0) as client:
+                    r = await client.get(f'https://ipwho.is/{ip}')
+                    if r.status_code == 200:
+                        data = r.json()
+                        if data.get('success') is not False:
+                            country = data.get('country')
+                            country_code = data.get('country_code')
+        except Exception:
+            country = None
+            country_code = None
+        await manager.register_agent(agent_id, agent_name, http_base, ws, has_camera, country, country_code)
 
         # Stream messages from agent to dashboards
         while True:
@@ -92,7 +110,7 @@ async def ws_dashboard(ws: WebSocket):
             elif target and data.get('type') in (
                 'start_interactive','stdin','end_interactive',
                 'screen_start','screen_stop','mouse','keyboard',
-                'camera_start','camera_stop','queue_reset','hard_reset','disconnect'
+                'camera_start','camera_stop','queue_reset','hard_reset'
             ):
                 ok = await manager.forward_json(target, data)
                 if not ok:

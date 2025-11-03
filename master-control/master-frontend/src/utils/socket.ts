@@ -1,4 +1,4 @@
-type Agent = { agent_id: string; name: string; has_camera?: boolean };
+type Agent = { agent_id: string; name: string; has_camera?: boolean; country?: string; country_code?: string };
 
 type DashboardEvent =
   | { type: 'agents'; agents: Agent[] }
@@ -265,15 +265,6 @@ class DashboardSocket {
     this.ws.send(JSON.stringify({ target: agentId, ...payload }));
   }
 
-  disconnect(agentId: string) {
-    const payload = { type: 'disconnect' };
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      this.pending.push({ target: agentId, payload });
-      this.connect();
-      return;
-    }
-    this.ws.send(JSON.stringify({ target: agentId, ...payload }));
-  }
 }
 
 export const dashboardSocket = new DashboardSocket();
