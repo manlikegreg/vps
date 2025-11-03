@@ -798,12 +798,20 @@ async def _connect_one_master(url: str):
                                         p = sess.get("proc")
                                         if p is not None:
                                             if os.name == 'nt':
-                                                def _kill_i2():
-                                                    try:
-                                                        p.terminate()
-                                                    except Exception:
-                                                        pass
-                                                await asyncio.to_thread(_kill_i2)
+                                                if sess.get("pty"):
+                                                    def _kill_i2():
+                                                        try:
+                                                            p.terminate(True)
+                                                        except Exception:
+                                                            pass
+                                                    await asyncio.to_thread(_kill_i2)
+                                                else:
+                                                    def _kill_i2():
+                                                        try:
+                                                            p.terminate()
+                                                        except Exception:
+                                                            pass
+                                                    await asyncio.to_thread(_kill_i2)
                                             else:
                                                 try:
                                                     p.terminate()
@@ -845,22 +853,30 @@ async def _connect_one_master(url: str):
                             except Exception:
                                 pass
                             try:
-                                sess = interactive_sessions.pop(ws, None)
-                                if sess:
-                                    p = sess.get("proc")
-                                    if p is not None:
-                                        if os.name == 'nt':
-                                            def _kill_di():
+                                    sess = interactive_sessions.pop(ws, None)
+                                    if sess:
+                                        p = sess.get("proc")
+                                        if p is not None:
+                                            if os.name == 'nt':
+                                                if sess.get("pty"):
+                                                    def _kill_di():
+                                                        try:
+                                                            p.terminate(True)
+                                                        except Exception:
+                                                            pass
+                                                    await asyncio.to_thread(_kill_di)
+                                                else:
+                                                    def _kill_di():
+                                                        try:
+                                                            p.terminate()
+                                                        except Exception:
+                                                            pass
+                                                    await asyncio.to_thread(_kill_di)
+                                            else:
                                                 try:
                                                     p.terminate()
                                                 except Exception:
                                                     pass
-                                            await asyncio.to_thread(_kill_di)
-                                        else:
-                                            try:
-                                                p.terminate()
-                                            except Exception:
-                                                pass
                                 c = camera_sessions.pop(ws, None)
                                 if c:
                                     c["running"] = False
@@ -1178,7 +1194,40 @@ async def _connect_one_master(url: str):
                             except Exception:
                                 pass
                             if os.name == "nt":
-                                # If launching python, spawn it directly for better interactive behavior on Windows
+                                # Prefer ConPTY via pywinpty on Windows for true TTY prompts
+                                use_pty = False
+                                try:
+                                    import pywinpty  # type: ignore
+                                    from pywinpty import PtyProcess  # type: ignore
+                                    use_pty = True
+                                except Exception:
+                                    use_pty = False
+                                if use_pty:
+                                    def start_pty():
+                                        return PtyProcess.spawn(start_cmd, cwd=current_agent_dir, env=env_final)
+                                    proc = await asyncio.to_thread(start_pty)
+                                    # Replace stdout/stderr readers with PTY reader
+                                    loop = asyncio.get_running_loop()
+                                    q: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
+                                    async def pty_reader():
+                                        try:
+                                            while True:
+                                                ch = await asyncio.to_thread(proc.read, 1)
+                                                if not ch:
+                                                    break
+                                                await q.put(("output", ch))
+                                        except Exception:
+                                            pass
+                                        finally:
+                                            await q.put(("__done__", "pty"))
+                                    tasks = [asyncio.create_task(pty_reader())]
+                                    interactive_sessions[ws] = {"proc": proc, "queue": q, "tasks": tasks, "pty": True}
+                                    try:
+                                        await ws.send(json.dumps({"output": "[Interactive session started]\n"}))
+                                    except Exception:
+                                        pass
+                                    continue
+                                # Fallback: spawn process directly
                                 cmd_list = None
                                 try:
                                     parts = shlex.split(start_cmd, posix=False)
@@ -1268,7 +1317,11 @@ async def _connect_one_master(url: str):
                                         code = None
                                         try:
                                             p = sess_i.get("proc")
-                                            if os.name == 'nt':
+                                            if os.name == 'nt' and sess_i.get("pty"):
+                                                alive = await asyncio.to_thread(p.isalive)
+                                                if not alive:
+                                                    code = await asyncio.to_thread(lambda: getattr(p, 'exitstatus', 0))
+                                            elif os.name == 'nt':
                                                 code = await asyncio.to_thread(p.poll)
                                             else:
                                                 code = p.returncode
@@ -1386,15 +1439,26 @@ async def _connect_one_master(url: str):
                             try:
                                 payload = data.get("data", "")
                                 if os.name == 'nt':
-                                    def write_stdin():
-                                        try:
-                                            proc.stdin.write(payload)
-                                            if not payload.endswith("\n"):
-                                                proc.stdin.write("\n")
-                                            proc.stdin.flush()
-                                        except Exception:
-                                            pass
-                                    await asyncio.to_thread(write_stdin)
+                                    if sess.get("pty"):
+                                        def write_pty():
+                                            try:
+                                                txt = payload
+                                                if not txt.endswith("\n"):
+                                                    txt += "\r\n"
+                                                proc.write(txt)
+                                            except Exception:
+                                                pass
+                                        await asyncio.to_thread(write_pty)
+                                    else:
+                                        def write_stdin():
+                                            try:
+                                                proc.stdin.write(payload)
+                                                if not payload.endswith("\n"):
+                                                    proc.stdin.write("\n")
+                                                proc.stdin.flush()
+                                            except Exception:
+                                                pass
+                                        await asyncio.to_thread(write_stdin)
                                 else:
                                     if not payload.endswith("\n"):
                                         payload += "\n"
@@ -1409,12 +1473,20 @@ async def _connect_one_master(url: str):
                                 proc = sess.get("proc")
                                 try:
                                     if os.name == 'nt':
-                                        def _term():
-                                            try:
-                                                proc.terminate()
-                                            except Exception:
-                                                pass
-                                        await asyncio.to_thread(_term)
+                                        if sess.get("pty"):
+                                            def _termpty():
+                                                try:
+                                                    proc.terminate(True)
+                                                except Exception:
+                                                    pass
+                                            await asyncio.to_thread(_termpty)
+                                        else:
+                                            def _term():
+                                                try:
+                                                    proc.terminate()
+                                                except Exception:
+                                                    pass
+                                            await asyncio.to_thread(_term)
                                     else:
                                         proc.terminate()
                                 except Exception:
