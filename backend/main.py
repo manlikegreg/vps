@@ -603,6 +603,7 @@ screen_sessions: dict[Any, dict] = {}
 camera_sessions: dict[Any, dict] = {}
 
 async def _connect_one_master(url: str):
+    global command_running, queue_task, queue_current_proc, queue_started_at, command_queue
     last_log = 0.0
     retry_delay = 2
     while True:
@@ -695,7 +696,6 @@ async def _connect_one_master(url: str):
                                 await _send_line(ws, "output", "[Queue] Reset requested\n")
                                 async with queue_lock:
                                     command_queue.clear()
-                                    global command_running, queue_task, queue_current_proc, queue_started_at
                                     command_running = False
                                     queue_task = None
                                     proc = queue_current_proc
@@ -769,7 +769,6 @@ async def _connect_one_master(url: str):
                             try:
                                 async with queue_lock:
                                     command_queue.clear()
-                                    global command_running, queue_task, queue_current_proc, queue_started_at
                                     command_running = False
                                     queue_task = None
                                     proc = queue_current_proc
@@ -835,6 +834,49 @@ async def _connect_one_master(url: str):
                                 pass
                             continue
 
+                        if isinstance(data, dict) and data.get("type") == "disconnect":
+                            try:
+                                await _send_line(ws, "output", "[Disconnect requested]\n")
+                            except Exception:
+                                pass
+                            try:
+                                await _remove_queued_for_ws(ws)
+                            except Exception:
+                                pass
+                            try:
+                                sess = interactive_sessions.pop(ws, None)
+                                if sess:
+                                    p = sess.get("proc")
+                                    if p is not None:
+                                        if os.name == 'nt':
+                                            def _kill_di():
+                                                try:
+                                                    p.terminate()
+                                                except Exception:
+                                                    pass
+                                            await asyncio.to_thread(_kill_di)
+                                        else:
+                                            try:
+                                                p.terminate()
+                                            except Exception:
+                                                pass
+                                c = camera_sessions.pop(ws, None)
+                                if c:
+                                    c["running"] = False
+                                    t = c.get("task");
+                                    if t: t.cancel()
+                                s = screen_sessions.pop(ws, None)
+                                if s:
+                                    s["running"] = False
+                                    t = s.get("task");
+                                    if t: t.cancel()
+                            except Exception:
+                                pass
+                            try:
+                                await ws.close()
+                            except Exception:
+                                pass
+                            continue
 
                         if isinstance(data, dict) and data.get("type") == "camera_start":
                             if not CAMERA_ENABLED:
@@ -1110,6 +1152,11 @@ async def _connect_one_master(url: str):
                                 except Exception:
                                     pass
                                 continue
+                            # Clear queued commands for this dashboard to avoid interference
+                            try:
+                                await _remove_queued_for_ws(ws)
+                            except Exception:
+                                pass
                             start_cmd = data.get("command") or ""
                             if not start_cmd.strip():
                                 try:

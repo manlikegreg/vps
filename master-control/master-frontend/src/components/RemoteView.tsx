@@ -75,6 +75,8 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
         URL.revokeObjectURL(url)
         setRecording(false)
       }
+      // Optimistic toggle so the button changes immediately
+      setRecording(true)
       rec.start()
       recorderRef.current = rec
     } catch (e) {

@@ -84,9 +84,9 @@ async def get_blacklist(_: bool = Depends(auth_required)):
 @app.post('/admin/agents/{agent_id}/blacklist')
 async def add_blacklist(agent_id: str, _: bool = Depends(auth_required)):
     await manager.add_blacklist(agent_id)
-    # If currently connected, drop it
+    # If currently connected, drop it immediately
     try:
-        await manager.forward_json(agent_id, {"type": "disconnect"})
+        await manager.force_disconnect_agent(agent_id)
     except Exception:
         pass
     return JSONResponse(content={"ok": True})
@@ -95,6 +95,14 @@ async def add_blacklist(agent_id: str, _: bool = Depends(auth_required)):
 async def remove_blacklist(agent_id: str, _: bool = Depends(auth_required)):
     await manager.remove_blacklist(agent_id)
     return JSONResponse(content={"ok": True})
+
+@app.post('/admin/agents/{agent_id}/disconnect')
+async def disconnect_agent(agent_id: str, _: bool = Depends(auth_required)):
+    try:
+        await manager.force_disconnect_agent(agent_id)
+        return JSONResponse(content={"ok": True})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
 
 
 # Protect existing REST endpoints

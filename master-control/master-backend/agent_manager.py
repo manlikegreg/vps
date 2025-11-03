@@ -60,6 +60,20 @@ class AgentManager:
         await self.persist_agents()
         await self.broadcast_agents()
 
+    async def force_disconnect_agent(self, agent_id: str) -> None:
+        ws: WebSocket | None = None
+        async with self._lock:
+            entry = self.agents.get(agent_id)
+            if entry:
+                ws = entry.get("socket")
+        try:
+            if ws:
+                await ws.close()
+        except Exception:
+            pass
+        # Ensure removal and broadcast
+        await self.remove_agent(agent_id)
+
     async def persist_agents(self) -> None:
         agents_list = await self.get_agents()
         async with aiofiles.open(AGENTS_FILE, 'w') as f:

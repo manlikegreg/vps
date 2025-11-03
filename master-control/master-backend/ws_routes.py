@@ -110,7 +110,7 @@ async def ws_dashboard(ws: WebSocket):
             elif target and data.get('type') in (
                 'start_interactive','stdin','end_interactive',
                 'screen_start','screen_stop','mouse','keyboard',
-                'camera_start','camera_stop','queue_reset','hard_reset'
+                'camera_start','camera_stop','queue_reset','hard_reset','disconnect'
             ):
                 ok = await manager.forward_json(target, data)
                 if not ok:
