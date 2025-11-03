@@ -717,25 +717,8 @@ async def _connect_one_master(url: str):
                                                 pass
                                     except Exception:
                                         pass
-                                # Stop interactive/camera/screen sessions immediately
+                                # Stop camera/screen sessions; keep interactive running
                                 try:
-                                    # interactive
-                                    sess = interactive_sessions.pop(ws, None)
-                                    if sess:
-                                        p = sess.get("proc")
-                                        if p is not None:
-                                            if os.name == 'nt':
-                                                def _kill_i():
-                                                    try:
-                                                        p.terminate()
-                                                    except Exception:
-                                                        pass
-                                                await asyncio.to_thread(_kill_i)
-                                            else:
-                                                try:
-                                                    p.terminate()
-                                                except Exception:
-                                                    pass
                                     # camera
                                     c = camera_sessions.pop(ws, None)
                                     if c:
