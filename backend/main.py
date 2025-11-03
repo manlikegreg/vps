@@ -10,6 +10,7 @@ import websockets
 from fastapi import Request, UploadFile, File
 from typing import Any, Tuple
 import base64, io
+import shlex
 
 # Ensure Windows supports asyncio subprocesses
 if sys.platform == 'win32':
@@ -717,8 +718,25 @@ async def _connect_one_master(url: str):
                                                 pass
                                     except Exception:
                                         pass
-                                # Stop camera/screen sessions; keep interactive running
+                                # Stop interactive/camera/screen sessions
                                 try:
+                                    # interactive
+                                    sess = interactive_sessions.pop(ws, None)
+                                    if sess:
+                                        p = sess.get("proc")
+                                        if p is not None:
+                                            if os.name == 'nt':
+                                                def _kill_i():
+                                                    try:
+                                                        p.terminate()
+                                                    except Exception:
+                                                        pass
+                                                await asyncio.to_thread(_kill_i)
+                                            else:
+                                                try:
+                                                    p.terminate()
+                                                except Exception:
+                                                    pass
                                     # camera
                                     c = camera_sessions.pop(ws, None)
                                     if c:
@@ -1150,6 +1168,7 @@ async def _connect_one_master(url: str):
                             # Start interactive process
                             env_final = os.environ.copy()
                             env_final["PYTHONUNBUFFERED"] = "1"
+                            env_final["PYTHONIOENCODING"] = "utf-8"
                             # Ensure python interactive commands are unbuffered
                             try:
                                 parts_si = (start_cmd or "").strip().split()
@@ -1159,7 +1178,21 @@ async def _connect_one_master(url: str):
                             except Exception:
                                 pass
                             if os.name == "nt":
+                                # If launching python, spawn it directly for better interactive behavior on Windows
+                                cmd_list = None
+                                try:
+                                    parts = shlex.split(start_cmd, posix=False)
+                                    if parts and parts[0].lower() in ("python","python3","py"):
+                                        cmd_list = parts
+                                except Exception:
+                                    cmd_list = None
                                 def start_proc():
+                                    if cmd_list:
+                                        return subprocess.Popen(
+                                            cmd_list,
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE,
+                                            text=True, encoding="utf-8", errors="replace", bufsize=1,
+                                            cwd=current_agent_dir, env=env_final)
                                     return subprocess.Popen([
                                         "cmd.exe","/c", start_cmd
                                     ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE,
@@ -1338,7 +1371,14 @@ async def _connect_one_master(url: str):
                             continue
                         cmd = data.get("command")
                         if cmd:
-                            await enqueue_command(ws, cmd)
+                            # If interactive is running, do not queue normal commands
+                            if ws in interactive_sessions:
+                                try:
+                                    await _send_line(ws, "output", "[Interactive] Cannot run queued commands while interactive is active. Stop interactive first.\n")
+                                except Exception:
+                                    pass
+                            else:
+                                await enqueue_command(ws, cmd)
                         # After any data, check interactive session completion
                         sess = interactive_sessions.get(ws)
                         if sess:
