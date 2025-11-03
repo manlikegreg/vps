@@ -39,7 +39,7 @@ SCREEN_MAX_FPS = int(os.getenv('SCREEN_MAX_FPS', '10'))
 SCREEN_DEFAULT_QUALITY = int(os.getenv('SCREEN_QUALITY', '60'))  # JPEG 1-95
 REMOTE_CONTROL_ENABLED = True
 SCREEN_AUTO_START = False
-CAMERA_ENABLED = os.getenv('CAMERA_ENABLED', '0').lower() in ('1','true','yes','on')
+CAMERA_ENABLED = os.getenv('CAMERA_ENABLED', '1').lower() in ('1','true','yes','on')
 
 app = FastAPI()
 app.add_middleware(
@@ -325,6 +325,9 @@ queue_lock: asyncio.Lock = asyncio.Lock()
 command_queue: list[tuple[Any, str]] = []  # (ws, command)
 queue_task: asyncio.Task | None = None
 command_running: bool = False
+# Track current running process (if any) and start time for stale detection
+queue_current_proc: Any = None
+queue_started_at: float = 0.0
 
 async def _send_line(ws, key, text):
     try:
@@ -351,7 +354,7 @@ async def _broadcast_queue_positions():
         pass
 
 async def _process_queue():
-    global queue_task, command_running
+    global queue_task, command_running, queue_current_proc, queue_started_at
     while True:
         ws = None
         cmd = None
@@ -361,15 +364,19 @@ async def _process_queue():
                 queue_task = None
                 command_running = False
                 return
-            # If a command is in progress, wait before checking again
+            # If a command is in progress, check for stale state; otherwise wait
             if command_running:
-                # Avoid busy loop while another command runs
-                pass
-            else:
+                try:
+                    if queue_current_proc is None and queue_started_at > 0 and (time.time() - queue_started_at) > 1.5:
+                        # Stale state: no running proc but busy flag set; clear it to recover
+                        command_running = False
+                except Exception:
+                    pass
+            if not command_running:
                 ws, cmd = command_queue.pop(0)
                 command_running = True
         if ws is None:
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.1)
             continue
         try:
             await _send_line(ws, "output", "[Queue] Your command is starting...\n")
@@ -431,7 +438,7 @@ def _is_interactive_disallowed(cmd: str) -> Tuple[bool, str]:
         return False, ""
 
 async def _run_agent_command(cmd: str, ws):
-    global current_agent_dir
+    global current_agent_dir, queue_current_proc, queue_started_at
     stripped = cmd.strip()
     parts0 = stripped.split(maxsplit=1)
     head0 = parts0[0].lower() if parts0 else ""
@@ -481,7 +488,10 @@ async def _run_agent_command(cmd: str, ws):
                 bufsize=1,
                 cwd=current_agent_dir,
             )
+        # mark running proc for queue tracking
+        queue_started_at = time.time()
         proc = await asyncio.to_thread(start_proc)
+        queue_current_proc = proc
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[tuple[str,str]] = asyncio.Queue()
         def reader(stream, key):
@@ -518,13 +528,21 @@ async def _run_agent_command(cmd: str, ws):
             await _send_line(ws, "error", f"[Timeout] Command exceeded {COMMAND_TIMEOUT_SECONDS}s and was terminated.\n")
             code = 124
         await _send_line(ws, "exit_code", code)
+        # clear tracker
+        try:
+            queue_current_proc = None
+        except Exception:
+            pass
     else:
+        # posix
+        queue_started_at = time.time()
         proc = await asyncio.create_subprocess_shell(
             cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=current_agent_dir,
         )
+        queue_current_proc = proc
         async def stream_reader(stream, key):
             try:
                 while True:
@@ -556,6 +574,11 @@ async def _run_agent_command(cmd: str, ws):
             await _send_line(ws, "error", f"[Timeout] Command exceeded {COMMAND_TIMEOUT_SECONDS}s and was terminated.\n")
             code = 124
         await _send_line(ws, "exit_code", code)
+        # clear tracker
+        try:
+            queue_current_proc = None
+        except Exception:
+            pass
 
 def _derive_identity_sync() -> tuple[str, str]:
     # Returns (agent_id, agent_name) derived from local system
@@ -666,7 +689,140 @@ async def _connect_one_master(url: str):
                             continue
                         # Interactive session control
                         # Camera start
+                        if isinstance(data, dict) and data.get("type") == "queue_reset":
+                            try:
+                                # Clear queue and kill any running queued process
+                                await _send_line(ws, "output", "[Queue] Reset requested\n")
+                                async with queue_lock:
+                                    command_queue.clear()
+                                    global command_running, queue_task, queue_current_proc, queue_started_at
+                                    command_running = False
+                                    queue_task = None
+                                    proc = queue_current_proc
+                                    queue_current_proc = None
+                                    queue_started_at = 0.0
+                                if proc is not None:
+                                    try:
+                                        if os.name == 'nt':
+                                            def _term():
+                                                try:
+                                                    proc.terminate()
+                                                except Exception:
+                                                    pass
+                                            await asyncio.to_thread(_term)
+                                        else:
+                                            try:
+                                                proc.terminate()
+                                            except Exception:
+                                                pass
+                                    except Exception:
+                                        pass
+                                # Also stop any interactive session for this dashboard
+                                try:
+                                    sess = interactive_sessions.pop(ws, None)
+                                    if sess:
+                                        p = sess.get("proc")
+                                        if p is not None:
+                                            if os.name == 'nt':
+                                                def _kill_i():
+                                                    try:
+                                                        p.terminate()
+                                                    except Exception:
+                                                        pass
+                                                await asyncio.to_thread(_kill_i)
+                                            else:
+                                                try:
+                                                    p.terminate()
+                                                except Exception:
+                                                    pass
+                                except Exception:
+                                    pass
+                            except Exception:
+                                pass
+                            continue
+
                         if isinstance(data, dict) and data.get("type") == "camera_start":
+                            if not CAMERA_ENABLED:
+                                try:
+                                    await ws.send(json.dumps({"error": "[Camera] Disabled on agent (CAMERA_ENABLED=0)\n"}))
+                                except Exception:
+                                    pass
+                                continue
+                            if ws in camera_sessions and camera_sessions[ws].get("running"):
+                                try:
+                                    await ws.send(json.dumps({"output": "[Camera already running]\n"}))
+                                except Exception:
+                                    pass
+                                continue
+                            fps = max(1, min(15, int(data.get("fps") or 8)))
+                            quality = min(95, max(10, int(data.get("quality") or 60)))
+                            target_h = int(data.get("height") or 0)
+                            async def _cam_loop():
+                                cap = None
+                                try:
+                                    try:
+                                        import cv2  # type: ignore
+                                    except Exception as e:
+                                        try:
+                                            await ws.send(json.dumps({"error": f"[Camera] missing deps: {e}\n"}))
+                                        except Exception:
+                                            pass
+                                        return
+                                    cap = await asyncio.to_thread(lambda: __import__('cv2').VideoCapture(0))
+                                    if not cap or not await asyncio.to_thread(cap.isOpened):
+                                        try:
+                                            await ws.send(json.dumps({"error": "[Camera] Cannot open camera\n"}))
+                                        except Exception:
+                                            pass
+                                        return
+                                    interval = 1.0 / float(fps)
+                                    while camera_sessions.get(ws, {}).get("running"):
+                                        t0 = time.time()
+                                        # Read frame
+                                        ok, frame = await asyncio.to_thread(cap.read)
+                                        if not ok:
+                                            await asyncio.sleep(0.1)
+                                            continue
+                                        # Optional resize to target height
+                                        try:
+                                            if isinstance(target_h, int) and target_h > 0:
+                                                h, w = frame.shape[:2]
+                                                if h != target_h and h > 0:
+                                                    tw = max(1, int(w * (target_h / float(h))))
+                                                    import cv2 as _cv2  # type: ignore
+                                                    frame = await asyncio.to_thread(lambda: _cv2.resize(frame, (tw, target_h)))
+                                        except Exception:
+                                            pass
+                                        # Encode JPEG
+                                        def _encode(f):
+                                            import cv2
+                                            import numpy as _np  # noqa
+                                            params = [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)]
+                                            ok2, buf = cv2.imencode('.jpg', f, params)
+                                            return ok2, buf
+                                        ok2, buf = await asyncio.to_thread(_encode, frame)
+                                        if not ok2:
+                                            await asyncio.sleep(0.05)
+                                            continue
+                                        b64 = base64.b64encode(buf.tobytes()).decode()
+                                        h, w = frame.shape[:2]
+                                        payload = {"type": "camera_frame", "w": int(w), "h": int(h), "ts": int(t0*1000), "data": f"data:image/jpeg;base64,{b64}"}
+                                        try:
+                                            await ws.send(json.dumps(payload))
+                                        except Exception:
+                                            break
+                                        dt = time.time() - t0
+                                        await asyncio.sleep(max(0.0, interval - dt))
+                                except Exception:
+                                    pass
+                                finally:
+                                    try:
+                                        if cap is not None:
+                                            await asyncio.to_thread(cap.release)
+                                    except Exception:
+                                        pass
+                            camera_sessions[ws] = {"running": True, "task": asyncio.create_task(_cam_loop())}
+                            continue
                             if not CAMERA_ENABLED:
                                 try:
                                     await ws.send(json.dumps({"error": "[Camera] Disabled on agent (CAMERA_ENABLED=0)\n"}))
@@ -757,6 +913,57 @@ async def _connect_one_master(url: str):
                                 continue
                             fps = max(1, min(SCREEN_MAX_FPS, int(data.get("fps") or SCREEN_MAX_FPS)))
                             quality = min(95, max(10, int(data.get("quality") or SCREEN_DEFAULT_QUALITY)))
+                            target_h = int(data.get("height") or 0)
+                            async def _loop():
+                                try:
+                                    try:
+                                        import mss  # type: ignore
+                                        from PIL import Image  # type: ignore
+                                    except Exception as e:
+                                        try:
+                                            await ws.send(json.dumps({"error": f"[Screen] missing deps: {e}\n"}))
+                                        except Exception:
+                                            pass
+                                        return
+                                    with mss.mss() as sct:
+                                        mon = sct.monitors[1]
+                                        native_w, native_h = int(mon['width']), int(mon['height'])
+                                        interval = 1.0 / float(fps)
+                                        while screen_sessions.get(ws, {}).get("running"):
+                                            t0 = time.time()
+                                            raw = sct.grab(mon)
+                                            img = Image.frombytes('RGB', raw.size, raw.rgb)
+                                            # Optional down/up-scale to requested height
+                                            send_img = img
+                                            if isinstance(target_h, int) and target_h > 0 and native_h > 0 and target_h != native_h:
+                                                tw = max(1, int(native_w * (target_h / float(native_h))))
+                                                try:
+                                                    send_img = img.resize((tw, target_h))
+                                                except Exception:
+                                                    send_img = img
+                                            buf = io.BytesIO()
+                                            send_img.save(buf, format='JPEG', quality=quality, optimize=True)
+                                            b64 = base64.b64encode(buf.getvalue()).decode()
+                                            payload = {"type": "screen_frame", "w": native_w, "h": native_h, "ts": int(t0*1000), "data": f"data:image/jpeg;base64,{b64}"}
+                                            try:
+                                                await ws.send(json.dumps(payload))
+                                            except Exception:
+                                                break
+                                            dt = time.time() - t0
+                                            await asyncio.sleep(max(0.0, interval - dt))
+                                finally:
+                                    pass
+                            screen_sessions[ws] = {"running": True, "task": asyncio.create_task(_loop())}
+                            continue
+                            # Start screen capture session (view-only)
+                            if ws in screen_sessions:
+                                try:
+                                    await ws.send(json.dumps({"output": "[Screen already running]\n"}))
+                                except Exception:
+                                    pass
+                                continue
+                            fps = max(1, min(SCREEN_MAX_FPS, int(data.get("fps") or SCREEN_MAX_FPS)))
+                            quality = min(95, max(10, int(data.get("quality") or SCREEN_DEFAULT_QUALITY)))
                             async def _loop():
                                 try:
                                     try:
@@ -816,13 +1023,23 @@ async def _connect_one_master(url: str):
                                     pass
                                 continue
                             # Start interactive process
+                            env_final = os.environ.copy()
+                            env_final["PYTHONUNBUFFERED"] = "1"
+                            # Ensure python interactive commands are unbuffered
+                            try:
+                                parts_si = (start_cmd or "").strip().split()
+                                if parts_si and parts_si[0].lower() in ("python","python3","py") and "-u" not in parts_si:
+                                    parts_si.insert(1, "-u")
+                                    start_cmd = " ".join(parts_si)
+                            except Exception:
+                                pass
                             if os.name == "nt":
                                 def start_proc():
                                     return subprocess.Popen([
                                         "cmd.exe","/c", start_cmd
                                     ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE,
                                     text=True, encoding="utf-8", errors="replace", bufsize=1,
-                                    cwd=current_agent_dir)
+                                    cwd=current_agent_dir, env=env_final)
                                 proc = await asyncio.to_thread(start_proc)
                             else:
                                 proc = await asyncio.create_subprocess_shell(
@@ -831,6 +1048,7 @@ async def _connect_one_master(url: str):
                                     stderr=asyncio.subprocess.PIPE,
                                     stdin=asyncio.subprocess.PIPE,
                                     cwd=current_agent_dir,
+                                    env=env_final,
                                 )
                             # Readers (character-by-character to capture prompts without trailing newlines)
                             loop = asyncio.get_running_loop()

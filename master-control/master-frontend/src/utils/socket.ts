@@ -23,11 +23,11 @@ class DashboardSocket {
 
   setToken(token: string | null) {
     this.token = token;
-    // Reset socket to apply new auth
-    if (this.ws) {
+    // Reset socket to apply new auth; avoid closing while connecting to reduce console noise
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try { this.ws.close(); } catch {}
-      this.ws = null;
     }
+    this.ws = null;
   }
 
   private buildUrl() {
@@ -149,10 +149,11 @@ class DashboardSocket {
     agentIds.forEach((id) => this.sendCommand(id, command));
   }
 
-  startScreen(agentId: string, opts?: { fps?: number; quality?: number }) {
+  startScreen(agentId: string, opts?: { fps?: number; quality?: number; height?: number }) {
     const payload: any = { type: 'screen_start' };
     if (opts?.fps) payload.fps = opts.fps;
     if (opts?.quality) payload.quality = opts.quality;
+    if (opts?.height) payload.height = opts.height;
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       this.pending.push({ target: agentId, payload });
       this.connect();
@@ -171,10 +172,11 @@ class DashboardSocket {
     this.ws.send(JSON.stringify({ target: agentId, ...payload }));
   }
 
-  startCamera(agentId: string, opts?: { fps?: number; quality?: number }) {
+  startCamera(agentId: string, opts?: { fps?: number; quality?: number; height?: number }) {
     const payload: any = { type: 'camera_start' };
     if (opts?.fps) payload.fps = opts.fps;
     if (opts?.quality) payload.quality = opts.quality;
+    if (opts?.height) payload.height = opts.height;
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       this.pending.push({ target: agentId, payload });
       this.connect();
@@ -235,6 +237,16 @@ class DashboardSocket {
 
   endInteractive(agentId: string) {
     const payload = { type: 'end_interactive' };
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.pending.push({ target: agentId, payload });
+      this.connect();
+      return;
+    }
+    this.ws.send(JSON.stringify({ target: agentId, ...payload }));
+  }
+
+  queueReset(agentId: string) {
+    const payload = { type: 'queue_reset' };
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       this.pending.push({ target: agentId, payload });
       this.connect();

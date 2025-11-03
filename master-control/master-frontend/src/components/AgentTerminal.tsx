@@ -20,11 +20,14 @@ export default function AgentTerminal({ agent, onClose }: Props) {
   const uploadRef = useRef<HTMLInputElement | null>(null)
   const lastCmdRef = useRef<string>('')
   const [interactive, setInteractive] = useState(false)
+  const [icmd, setIcmd] = useState('')
   const [activeTab, setActiveTab] = useState<'remote' | 'camera'>('remote')
   const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || 'http://localhost:9000'
   const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
 
   useEffect(() => {
+    // Ensure WS is connected on mount so Send immediately works after refresh
+    dashboardSocket.connect()
     const handler = (line: string) => {
       setLines((prev) => {
         if ((prev.length ? prev[prev.length - 1] : lastLineRef.current) === line) return prev
@@ -44,6 +47,8 @@ export default function AgentTerminal({ agent, onClose }: Props) {
   const send = () => {
     const cmd = input
     if (!cmd.trim()) return
+    // Local echo for immediate feedback
+    setLines((prev) => [...prev, `> ${cmd}`])
     historyRef.current.push(cmd)
     historyIndexRef.current = historyRef.current.length
     lastCmdRef.current = cmd
@@ -138,10 +143,12 @@ export default function AgentTerminal({ agent, onClose }: Props) {
           <span style={{ color: '#9efc9e', fontSize: 12 }}>Path: <span style={{ color: '#ddd' }}>{currentDir || '(loading...)'}</span></span>
           <button className="btn secondary" onClick={cdUp}>Up</button>
           <button className="btn secondary" onClick={refreshStats}>Refresh</button>
+          <button className="btn secondary" onClick={() => { dashboardSocket.queueReset(agent.agent_id); setLines((prev) => [...prev, '[Queue] Reset requested']); }}>Refresh Queue</button>
           <button className="btn" onClick={triggerUpload} disabled={uploading}>{uploading ? 'Uploading...' : 'Upload'}</button>
           <input ref={uploadRef} type="file" style={{ display: 'none' }} onChange={onUpload} />
+          <input className="input" placeholder="Interactive command (e.g., python game.py)" value={icmd} onChange={(e) => setIcmd(e.target.value)} style={{ width: 260 }} />
           {!interactive ? (
-            <button className="btn" onClick={() => { const c = (input || '').trim(); if (!c) return; setInteractive(true); dashboardSocket.startInteractive(agent.agent_id, c); }}>Start Interactive</button>
+            <button className="btn" onClick={() => { const c = (icmd || '').trim(); if (!c) return; setInteractive(true); dashboardSocket.startInteractive(agent.agent_id, c); }}>Start Interactive</button>
           ) : (
             <button className="btn secondary" onClick={() => { dashboardSocket.endInteractive(agent.agent_id); setInteractive(false); }}>Stop Interactive</button>
           )}
@@ -227,11 +234,11 @@ export default function AgentTerminal({ agent, onClose }: Props) {
       </div>
       <div style={{ borderBottom: '1px solid #222', display: 'flex', gap: 8, marginTop: 10 }}>
         <button className={`btn ${activeTab === 'remote' ? '' : 'secondary'}`} onClick={() => setActiveTab('remote')}>Remote View</button>
-        <button className="btn secondary" disabled={!((agent as any).has_camera === true)} onClick={() => setActiveTab('camera')}>Camera</button>
+        <button className={`btn ${activeTab === 'camera' ? '' : 'secondary'}`} disabled={!((agent as any).has_camera === true)} onClick={() => setActiveTab('camera')}>Camera</button>
       </div>
       <div style={{ marginTop: 10 }}>
         {activeTab === 'camera' ? (
-          <CameraView agentId={agent.agent_id} agentName={agent.name} enabled={(agent as any).has_camera === true} onStarted={() => { /* stay on camera */ }} onStopped={() => { setActiveTab('remote') }} />
+          <CameraView agentId={agent.agent_id} agentName={agent.name} enabled={(agent as any).has_camera === true} onStarted={() => { /* stay on camera */ }} />
         ) : (
           <RemoteView agentId={agent.agent_id} agentName={agent.name} />
         )}

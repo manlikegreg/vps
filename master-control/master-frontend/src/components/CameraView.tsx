@@ -1,12 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { dashboardSocket } from '../utils/socket'
 import { savePhoto, saveVideo } from '../utils/cameraMedia'
 import CameraMediaPanel from './CameraMediaPanel'
 
 export default function CameraView({ agentId, agentName, enabled, onStarted, onStopped }: { agentId: string; agentName: string; enabled: boolean; onStarted?: () => void; onStopped?: () => void }) {
   const [frame, setFrame] = useState<string | null>(null)
+  const frameRef = useRef<string | null>(null)
   const [running, setRunning] = useState(false)
   const [recording, setRecording] = useState(false)
+  const [res, setRes] = useState<number>(720)
+  const [q, setQ] = useState<number>(60)
   const [showPanel, setShowPanel] = useState(false)
   const canvasRef = useState<HTMLCanvasElement | null>(null)[0] || null
   // Workaround: create canvas element on demand
@@ -20,13 +23,13 @@ export default function CameraView({ agentId, agentName, enabled, onStarted, onS
     }
     return c
   }
-  const recorderRef = useState<MediaRecorder | null>(null)[0] || null
-  let _recorder: MediaRecorder | null = (recorderRef as any)
+  const recorderRef = useRef<MediaRecorder | null>(null)
   let _chunks: Blob[] = []
 
   useEffect(() => {
     const cb = (f: { data: string; w?: number; h?: number }) => {
       setFrame(f.data)
+      frameRef.current = f.data
       const cvs = getCanvas()
       const img = new Image()
       img.onload = () => {
@@ -40,11 +43,23 @@ export default function CameraView({ agentId, agentName, enabled, onStarted, onS
     return () => dashboardSocket.offCamera(agentId, cb)
   }, [agentId])
 
-  const start = () => { if (!enabled) return; dashboardSocket.startCamera(agentId, { fps: 8, quality: 60 }); setRunning(true); try { onStarted && onStarted() } catch {} }
+  const start = () => { if (!enabled) return; dashboardSocket.startCamera(agentId, { fps: 8, quality: q, height: res }); setRunning(true); try { onStarted && onStarted() } catch {} }
   const stop = () => { dashboardSocket.stopCamera(agentId); setRunning(false); setFrame(null); try { onStopped && onStopped() } catch {} }
+
+  // Do not auto-start; only stop on unmount if running
+  useEffect(() => {
+    return () => { try { stop(); } catch {} };
+  }, []);
 
   const takePhoto = async () => {
     try {
+      if (!enabled) return
+      if (!running) start()
+      // wait for first frame if needed
+      const startTs = Date.now()
+      while (!frameRef.current && Date.now() - startTs < 2000) {
+        await new Promise((r) => setTimeout(r, 100))
+      }
       const cvs = getCanvas()
       const blob: Blob = await new Promise((res) => cvs.toBlob((b) => res(b || new Blob()), 'image/jpeg', 0.9)!)
       const id = await savePhoto(agentId, agentName || agentId, blob)
@@ -57,8 +72,15 @@ export default function CameraView({ agentId, agentName, enabled, onStarted, onS
     } catch {}
   }
 
-  const startRecord = () => {
+  const startRecord = async () => {
     if (recording) return
+    if (!enabled) return
+    if (!running) start()
+    // wait for first frame to size the canvas
+    const startTs = Date.now()
+    while (!frameRef.current && Date.now() - startTs < 2000) {
+      await new Promise((r) => setTimeout(r, 100))
+    }
     const cvs = getCanvas()
     const stream = (cvs as any).captureStream ? (cvs as any).captureStream(8) : null
     if (!stream) return
@@ -75,11 +97,11 @@ export default function CameraView({ agentId, agentName, enabled, onStarted, onS
       URL.revokeObjectURL(url)
     }
     rec.start()
-    ;(recorderRef as any) = rec
+    recorderRef.current = rec
     setRecording(true)
   }
   const stopRecord = () => {
-    try { ((recorderRef as any) as MediaRecorder)?.stop() } catch {}
+    try { recorderRef.current?.stop() } catch {}
     setRecording(false)
   }
 
@@ -87,16 +109,23 @@ export default function CameraView({ agentId, agentName, enabled, onStarted, onS
     <div className="card" style={{ marginTop: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
         <h3 style={{ color: '#9efc9e', margin: 0 }}>Camera</h3>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <select className="input" value={res} onChange={(e) => setRes(parseInt(e.target.value))}>
+            <option value={240}>240p</option>
+            <option value={480}>480p</option>
+            <option value={720}>720p</option>
+            <option value={1080}>1080p</option>
+          </select>
+          <input className="input" type="number" min={10} max={95} step={1} value={q} onChange={(e) => setQ(Math.max(10, Math.min(95, parseInt(e.target.value)||60)))} style={{ width: 80 }} title="JPEG quality" />
           <button className="btn" onClick={start} disabled={!enabled || running}>Start</button>
           <button className="btn secondary" onClick={stop} disabled={!running}>Stop</button>
-          <button className="btn" onClick={takePhoto} disabled={!running}>Take Photo</button>
+          <button className="btn" onClick={takePhoto} disabled={!enabled}>Take Photo</button>
           {!recording ? (
-            <button className="btn" onClick={startRecord} disabled={!running}>Start Record</button>
+            <button className="btn" onClick={startRecord} disabled={!enabled}>Start Record</button>
           ) : (
             <button className="btn secondary" onClick={stopRecord}>Stop Record</button>
           )}
-          <button className="btn secondary" onClick={() => setShowPanel(true)}>Media</button>
+          <button className="btn secondary" onClick={() => { const url = `${window.location.origin}/camera.html?agentId=${encodeURIComponent(agentId)}&agentName=${encodeURIComponent(agentName)}`; window.open(url, '_blank'); }}>Open in New Tab</button>
         </div>
       </div>
       {!enabled && <div style={{ color: '#ffb347', fontSize: 12, marginBottom: 6 }}>Camera not available on this agent.</div>}

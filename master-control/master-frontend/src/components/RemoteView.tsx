@@ -9,8 +9,8 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
   const [running, setRunning] = useState(false)
   const [expanded, setExpanded] = useState(true)
   const [recording, setRecording] = useState(false)
-  const [icmd, setIcmd] = useState('')
-  const [iRunning, setIRunning] = useState(false)
+  const [res, setRes] = useState<number>(720)
+  const [q, setQ] = useState<number>(70)
   const imgRef = useRef<HTMLImageElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [showRecs, setShowRecs] = useState(false)
@@ -179,8 +179,15 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
         <h3 style={{ color: '#9efc9e', margin: 0 }}>Remote View</h3>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <select className="input" value={res} onChange={(e) => setRes(parseInt(e.target.value))}>
+            <option value={240}>240p</option>
+            <option value={480}>480p</option>
+            <option value={720}>720p</option>
+            <option value={1080}>1080p</option>
+          </select>
+          <input className="input" type="number" min={10} max={95} step={1} value={q} onChange={(e) => setQ(Math.max(10, Math.min(95, parseInt(e.target.value)||70)))} style={{ width: 80 }} title="JPEG quality" />
           {!running ? (
-            <button className="btn" onClick={startScreen}>Start Remote Screen</button>
+            <button className="btn" onClick={() => dashboardSocket.startScreen(agentId, { fps: 8, quality: q, height: res })}>Start Remote Screen</button>
           ) : (
             <button className="btn secondary" onClick={stopScreen}>Stop</button>
           )}
@@ -195,6 +202,7 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
             <input type="checkbox" checked={control} onChange={(e) => setControl(e.target.checked)} /> Control
           </label>
           <button className="btn secondary" onClick={sendKeys} disabled={!control}>Send Keys</button>
+          <button className="btn secondary" onClick={() => { const url = `${window.location.origin}/remote.html?agentId=${encodeURIComponent(agentId)}&agentName=${encodeURIComponent(agentName)}`; window.open(url, '_blank'); }}>Open in New Tab</button>
           <input className="input" placeholder="Interactive command (e.g., python game.py)" value={icmd} onChange={(e) => setIcmd(e.target.value)} style={{ width: 260 }} />
           {!iRunning ? (
             <button className="btn" onClick={() => { if (!icmd.trim()) return; dashboardSocket.startInteractive(agentId, icmd); setIRunning(true) }}>Start Interactive</button>
