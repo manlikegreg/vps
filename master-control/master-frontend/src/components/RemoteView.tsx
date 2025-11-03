@@ -11,6 +11,7 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
   const [recording, setRecording] = useState(false)
   const [res, setRes] = useState<number>(720)
   const [q, setQ] = useState<number>(70)
+  const [fps, setFps] = useState<number | 'default'>('default')
   const imgRef = useRef<HTMLImageElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [showRecs, setShowRecs] = useState(false)
@@ -44,7 +45,7 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
     img.onload = () => { if (recording) doDraw() }
   }, [frame, recording, nativeW, nativeH])
 
-  const startScreen = () => { dashboardSocket.startScreen(agentId, { fps: 8, quality: 65 }); setRunning(true) }
+  const startScreen = () => { dashboardSocket.startScreen(agentId, { fps: fps === 'default' ? undefined : fps, quality: q, height: res }); setRunning(true) }
   const stopScreen = () => { dashboardSocket.stopScreen(agentId); setRunning(false); setFrame(null); if (recording) { try { recorderRef.current?.stop() } catch {} ; setRecording(false) } }
 
   const startRecord = () => {
@@ -189,15 +190,26 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
         <h3 style={{ color: '#9efc9e', margin: 0 }}>Remote View</h3>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <select className="input" value={res} onChange={(e) => setRes(parseInt(e.target.value))}>
-            <option value={240}>240p</option>
-            <option value={480}>480p</option>
-            <option value={720}>720p</option>
-            <option value={1080}>1080p</option>
-          </select>
-          <input className="input" type="number" min={10} max={95} step={1} value={q} onChange={(e) => setQ(Math.max(10, Math.min(95, parseInt(e.target.value)||70)))} style={{ width: 80 }} title="JPEG quality" />
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <select className="input" value={res} onChange={(e) => setRes(parseInt(e.target.value))}>
+              <option value={240}>240p</option>
+              <option value={480}>480p</option>
+              <option value={720}>720p</option>
+              <option value={1080}>1080p</option>
+            </select>
+            <select className="input" value={fps === 'default' ? 'default' : String(fps)} onChange={(e) => { const v = e.target.value; setFps(v === 'default' ? 'default' : parseInt(v)); }}>
+              <option value="default">fps (default)</option>
+              <option value="10">10</option>
+              <option value="20">20</option>
+              <option value="30">30</option>
+              <option value="40">40</option>
+              <option value="50">50</option>
+              <option value="60">60</option>
+            </select>
+            <input className="input" type="number" min={10} max={95} step={1} value={q} onChange={(e) => setQ(Math.max(10, Math.min(95, parseInt(e.target.value)||70)))} style={{ width: 80 }} title="JPEG quality" />
+          </div>
           {!running ? (
-            <button className="btn" onClick={() => dashboardSocket.startScreen(agentId, { fps: 8, quality: q, height: res })}>Start Remote Screen</button>
+            <button className="btn" onClick={startScreen}>Start Remote Screen</button>
           ) : (
             <button className="btn secondary" onClick={stopScreen}>Stop</button>
           )}

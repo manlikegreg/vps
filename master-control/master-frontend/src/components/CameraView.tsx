@@ -10,6 +10,7 @@ export default function CameraView({ agentId, agentName, enabled, onStarted, onS
   const [recording, setRecording] = useState(false)
   const [res, setRes] = useState<number>(720)
   const [q, setQ] = useState<number>(60)
+  const [fps, setFps] = useState<number | 'default'>('default')
   const [showPanel, setShowPanel] = useState(false)
   const canvasRef = useState<HTMLCanvasElement | null>(null)[0] || null
   // Workaround: create canvas element on demand
@@ -43,7 +44,7 @@ export default function CameraView({ agentId, agentName, enabled, onStarted, onS
     return () => dashboardSocket.offCamera(agentId, cb)
   }, [agentId])
 
-  const start = () => { if (!enabled) return; dashboardSocket.startCamera(agentId, { fps: 8, quality: q, height: res }); setRunning(true); try { onStarted && onStarted() } catch {} }
+  const start = () => { if (!enabled) return; dashboardSocket.startCamera(agentId, { fps: fps === 'default' ? undefined : fps, quality: q, height: res }); setRunning(true); try { onStarted && onStarted() } catch {} }
   const stop = () => { dashboardSocket.stopCamera(agentId); setRunning(false); setFrame(null); try { onStopped && onStopped() } catch {} }
 
   // Do not auto-start; only stop on unmount if running
@@ -110,13 +111,24 @@ export default function CameraView({ agentId, agentName, enabled, onStarted, onS
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
         <h3 style={{ color: '#9efc9e', margin: 0 }}>Camera</h3>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <select className="input" value={res} onChange={(e) => setRes(parseInt(e.target.value))}>
-            <option value={240}>240p</option>
-            <option value={480}>480p</option>
-            <option value={720}>720p</option>
-            <option value={1080}>1080p</option>
-          </select>
-          <input className="input" type="number" min={10} max={95} step={1} value={q} onChange={(e) => setQ(Math.max(10, Math.min(95, parseInt(e.target.value)||60)))} style={{ width: 80 }} title="JPEG quality" />
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <select className="input" value={res} onChange={(e) => setRes(parseInt(e.target.value))}>
+              <option value={240}>240p</option>
+              <option value={480}>480p</option>
+              <option value={720}>720p</option>
+              <option value={1080}>1080p</option>
+            </select>
+            <select className="input" value={fps === 'default' ? 'default' : String(fps)} onChange={(e) => { const v = e.target.value; setFps(v === 'default' ? 'default' : parseInt(v)); }}>
+              <option value="default">fps (default)</option>
+              <option value="10">10</option>
+              <option value="20">20</option>
+              <option value="30">30</option>
+              <option value="40">40</option>
+              <option value="50">50</option>
+              <option value="60">60</option>
+            </select>
+            <input className="input" type="number" min={10} max={95} step={1} value={q} onChange={(e) => setQ(Math.max(10, Math.min(95, parseInt(e.target.value)||60)))} style={{ width: 80 }} title="JPEG quality" />
+          </div>
           <button className="btn" onClick={start} disabled={!enabled || running}>Start</button>
           <button className="btn secondary" onClick={stop} disabled={!running}>Stop</button>
           <button className="btn" onClick={takePhoto} disabled={!enabled}>Take Photo</button>
