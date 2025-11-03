@@ -1242,8 +1242,59 @@ async def _connect_one_master(url: str):
                                 tasks.append(asyncio.create_task(stream_reader_chars(proc.stdout, "output")))
                                 tasks.append(asyncio.create_task(stream_reader_chars(proc.stderr, "error")))
                             interactive_sessions[ws] = {"proc": proc, "queue": q, "tasks": tasks}
+                            # Pump queued output to master continuously so prompts show immediately
+                            async def _pump():
+                                try:
+                                    while True:
+                                        sess_i = interactive_sessions.get(ws)
+                                        if not sess_i:
+                                            return
+                                        qq: asyncio.Queue = sess_i.get("queue")
+                                        drained = False
+                                        while True:
+                                            try:
+                                                item = qq.get_nowait()
+                                            except asyncio.QueueEmpty:
+                                                break
+                                            else:
+                                                drained = True
+                                                key, payload = item
+                                                if key != "__done__":
+                                                    try:
+                                                        await ws.send(json.dumps({key: payload}))
+                                                    except Exception:
+                                                        return
+                                        # check process exit
+                                        code = None
+                                        try:
+                                            p = sess_i.get("proc")
+                                            if os.name == 'nt':
+                                                code = await asyncio.to_thread(p.poll)
+                                            else:
+                                                code = p.returncode
+                                        except Exception:
+                                            code = None
+                                        if code is not None:
+                                            try:
+                                                await ws.send(json.dumps({"exit_code": int(code)}))
+                                            except Exception:
+                                                pass
+                                            # cleanup tasks
+                                            for t in sess_i.get("tasks", []):
+                                                try:
+                                                    t.cancel()
+                                                except Exception:
+                                                    pass
+                                            interactive_sessions.pop(ws, None)
+                                            return
+                                        if not drained:
+                                            await asyncio.sleep(0.05)
+                                except Exception:
+                                    pass
+                            pump_task = asyncio.create_task(_pump())
+                            interactive_sessions[ws]["pump"] = pump_task
                             try:
-                                await ws.send(json.dumps({"output": "[Interactive session started]\n"}))
+                                await ws.send(json.dumps({"output": "[Interactive session started]\\n"}))
                             except Exception:
                                 pass
                             continue
