@@ -49,8 +49,8 @@ export default function AgentList({ onOpenTerminal }: Props) {
             <div key={a.agent_id} className="agent-item">
               <div>
                 <span className="status-dot" />
-              <span className="agent-name">{a.name} {a.country_code ? (<span style={{ color: '#9efc9e', fontSize: 12 }}>({a.country_code})</span>) : null}</span>
-              <div className="agent-id">{a.agent_id}</div>
+                <span className="agent-name">{a.name} {a.country_code ? (<span style={{ color: '#9efc9e', fontSize: 12 }}>({a.country_code})</span>) : null}</span>
+                <div className="agent-id">{a.agent_id}</div>
               </div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 <button className="btn" onClick={() => onOpenTerminal(a)}>Open Terminal</button>
@@ -66,6 +66,25 @@ export default function AgentList({ onOpenTerminal }: Props) {
         {agents.length === 0 && (
           <div style={{ color: '#777' }}>No agents connected</div>
         )}
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <h3 style={{ color: '#ffb347', margin: '8px 0' }}>Blacklisted</h3>
+        <div>
+          {blacklist.map((id) => (
+            <div key={id} className="agent-item">
+              <div>
+                <span className="agent-name">{id}</span>
+                <div className="agent-id" style={{ color: '#999' }}>blocked</div>
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button className="btn secondary" onClick={() => { if (confirm('Whitelist this agent?')) toggleBlacklist(id, false) }}>Whitelist</button>
+              </div>
+            </div>
+          ))}
+          {blacklist.length === 0 && (
+            <div style={{ color: '#777' }}>No blacklisted agents</div>
+          )}
+        </div>
       </div>
     </div>
   )
