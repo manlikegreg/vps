@@ -45,36 +45,46 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
   }, [frame, recording, nativeW, nativeH])
 
   const startScreen = () => { dashboardSocket.startScreen(agentId, { fps: 8, quality: 65 }); setRunning(true) }
-  const stopScreen = () => { dashboardSocket.stopScreen(agentId); setRunning(false); setFrame(null) }
+  const stopScreen = () => { dashboardSocket.stopScreen(agentId); setRunning(false); setFrame(null); if (recording) { try { recorderRef.current?.stop() } catch {} ; setRecording(false) } }
 
   const startRecord = () => {
     if (recording) return
     const cvs = canvasRef.current
-    if (!cvs) return
-    const stream = cvs.captureStream(8)
-    const rec = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' })
-    chunksRef.current = []
-    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunksRef.current.push(e.data) }
-    rec.onstop = async () => {
-      const blob = new Blob(chunksRef.current, { type: 'video/webm' })
-      // Store to local recordings DB
-      try {
-        // dynamically import to avoid bundling issues
-        const mod = await import('../utils/recordings')
-        await mod.saveRecording(agentId, agentName, blob)
-      } catch {}
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      const safeName = agentName?.trim() ? agentName.replace(/[^\w\-\. ]+/g, '_') : agentId
-      a.href = url; a.download = `screen-${safeName}-${Date.now()}.webm`
-      document.body.appendChild(a); a.click(); a.remove()
-      URL.revokeObjectURL(url)
+    if (!cvs) { console.warn('No canvas for recording'); return }
+    const capture = (cvs as any).captureStream ? (cvs as any).captureStream(8) : null
+    if (!capture) { console.warn('Canvas captureStream not supported'); return }
+    try {
+      const rec = new MediaRecorder(capture, { mimeType: 'video/webm;codecs=vp9' })
+      chunksRef.current = []
+      rec.ondataavailable = (e) => { if (e.data && e.data.size) chunksRef.current.push(e.data) }
+      rec.onstart = () => setRecording(true)
+      rec.onerror = () => { setRecording(false) }
+      rec.onstop = async () => {
+        const blob = new Blob(chunksRef.current, { type: 'video/webm' })
+        // Store to local recordings DB
+        try {
+          const mod = await import('../utils/recordings')
+          await mod.saveRecording(agentId, agentName, blob)
+        } catch {}
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        const safeName = agentName?.trim() ? agentName.replace(/[^\w\-\. ]+/g, '_') : agentId
+        a.href = url; a.download = `screen-${safeName}-${Date.now()}.webm`
+        document.body.appendChild(a); a.click(); a.remove()
+        URL.revokeObjectURL(url)
+        setRecording(false)
+      }
+      rec.start()
+      recorderRef.current = rec
+    } catch (e) {
+      console.error('Failed to start recording', e)
+      setRecording(false)
     }
-    rec.start()
-    recorderRef.current = rec
-    setRecording(true)
   }
-  const stopRecord = () => { try { recorderRef.current?.stop() } catch {} ; setRecording(false) }
+  const stopRecord = () => {
+    try { if (recorderRef.current && (recorderRef.current as any).state !== 'inactive') recorderRef.current.stop() } catch {}
+    setRecording(false)
+  }
 
   const handleClick = (e: React.MouseEvent) => {
     // clicks handled via down/up; keep for single-click fallback
