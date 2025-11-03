@@ -20,6 +20,10 @@ async def ws_agent(ws: WebSocket):
         agent_name = info.get('agent_name') or agent_id
         http_base = info.get('http_base') or 'http://localhost:8000'
         has_camera = bool(info.get('has_camera'))
+        # Reject if blacklisted
+        if await manager.is_blacklisted(agent_id):
+            await ws.close()
+            return
         await manager.register_agent(agent_id, agent_name, http_base, ws, has_camera)
 
         # Stream messages from agent to dashboards
@@ -88,7 +92,7 @@ async def ws_dashboard(ws: WebSocket):
             elif target and data.get('type') in (
                 'start_interactive','stdin','end_interactive',
                 'screen_start','screen_stop','mouse','keyboard',
-                'camera_start','camera_stop','queue_reset'
+                'camera_start','camera_stop','queue_reset','hard_reset','disconnect'
             ):
                 ok = await manager.forward_json(target, data)
                 if not ok:

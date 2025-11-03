@@ -254,6 +254,26 @@ class DashboardSocket {
     }
     this.ws.send(JSON.stringify({ target: agentId, ...payload }));
   }
+
+  hardReset(agentId: string) {
+    const payload = { type: 'hard_reset' };
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.pending.push({ target: agentId, payload });
+      this.connect();
+      return;
+    }
+    this.ws.send(JSON.stringify({ target: agentId, ...payload }));
+  }
+
+  disconnect(agentId: string) {
+    const payload = { type: 'disconnect' };
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.pending.push({ target: agentId, payload });
+      this.connect();
+      return;
+    }
+    this.ws.send(JSON.stringify({ target: agentId, ...payload }));
+  }
 }
 
 export const dashboardSocket = new DashboardSocket();

@@ -75,6 +75,32 @@ async def db_health_endpoint(_: bool = Depends(auth_required)):
     status = 200 if ok else 500
     return JSONResponse(status_code=status, content=info)
 
+# --- Blacklist management ---
+@app.get('/admin/blacklist')
+async def get_blacklist(_: bool = Depends(auth_required)):
+    bl = await manager.get_blacklist()
+    return JSONResponse(content={"blacklist": bl})
+
+@app.post('/admin/agents/{agent_id}/blacklist')
+async def add_blacklist(agent_id: str, _: bool = Depends(auth_required)):
+    await manager.add_blacklist(agent_id)
+    # If currently connected, drop it
+    try:
+        await manager.forward_json(agent_id, {"type": "disconnect"})
+    except Exception:
+        pass
+    return JSONResponse(content={"ok": True})
+
+@app.post('/admin/agents/{agent_id}/whitelist')
+async def remove_blacklist(agent_id: str, _: bool = Depends(auth_required)):
+    await manager.remove_blacklist(agent_id)
+    return JSONResponse(content={"ok": True})
+
+@app.post('/admin/agents/{agent_id}/disconnect')
+async def disconnect_agent(agent_id: str, _: bool = Depends(auth_required)):
+    ok = await manager.forward_json(agent_id, {"type": "disconnect"})
+    return JSONResponse(content={"ok": bool(ok)})
+
 # Protect existing REST endpoints
 @app.get('/agent/{agent_id}/stats')
 async def agent_stats(agent_id: str, _: bool = Depends(auth_required)):

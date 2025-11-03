@@ -7,6 +7,7 @@ import os
 import uuid
 
 AGENTS_FILE = os.path.join(os.path.dirname(__file__), 'config', 'agents.json')
+BLACKLIST_FILE = os.path.join(os.path.dirname(__file__), 'config', 'blacklist.json')
 
 class AgentManager:
     def __init__(self) -> None:
@@ -14,11 +15,21 @@ class AgentManager:
         self.dashboards: Set[WebSocket] = set()
         self._lock = asyncio.Lock()
         self._pending_stats: Dict[str, asyncio.Future] = {}
-        # Ensure config file exists
+        self._blacklist: Set[str] = set()
+        # Ensure config dir/files exist
         os.makedirs(os.path.join(os.path.dirname(__file__), 'config'), exist_ok=True)
         if not os.path.exists(AGENTS_FILE):
             with open(AGENTS_FILE, 'w', encoding='utf-8') as f:
                 json.dump([], f)
+        if not os.path.exists(BLACKLIST_FILE):
+            with open(BLACKLIST_FILE, 'w', encoding='utf-8') as f:
+                json.dump([], f)
+        else:
+            try:
+                with open(BLACKLIST_FILE, 'r', encoding='utf-8') as f:
+                    self._blacklist = set(json.load(f) or [])
+            except Exception:
+                self._blacklist = set()
 
     async def register_dashboard(self, ws: WebSocket) -> None:
         async with self._lock:
@@ -50,6 +61,33 @@ class AgentManager:
     async def get_agents(self) -> List[Dict[str, Any]]:
         async with self._lock:
             return [{"agent_id": aid, "name": info.get("name"), "http_base": info.get("http_base"), "has_camera": bool(info.get("has_camera"))} for aid, info in self.agents.items()]
+
+    # Blacklist management
+    async def is_blacklisted(self, agent_id: str) -> bool:
+        async with self._lock:
+            return agent_id in self._blacklist
+
+    async def get_blacklist(self) -> List[str]:
+        async with self._lock:
+            return sorted(list(self._blacklist))
+
+    async def add_blacklist(self, agent_id: str) -> None:
+        async with self._lock:
+            self._blacklist.add(agent_id)
+            try:
+                with open(BLACKLIST_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(sorted(list(self._blacklist)), f, indent=2)
+            except Exception:
+                pass
+
+    async def remove_blacklist(self, agent_id: str) -> None:
+        async with self._lock:
+            self._blacklist.discard(agent_id)
+            try:
+                with open(BLACKLIST_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(sorted(list(self._blacklist)), f, indent=2)
+            except Exception:
+                pass
 
     async def broadcast_agents(self) -> None:
         payload = {"type": "agents", "agents": await self.get_agents()}

@@ -717,8 +717,9 @@ async def _connect_one_master(url: str):
                                                 pass
                                     except Exception:
                                         pass
-                                # Also stop any interactive session for this dashboard
+                                # Stop interactive/camera/screen sessions immediately
                                 try:
+                                    # interactive
                                     sess = interactive_sessions.pop(ws, None)
                                     if sess:
                                         p = sess.get("proc")
@@ -735,8 +736,112 @@ async def _connect_one_master(url: str):
                                                     p.terminate()
                                                 except Exception:
                                                     pass
+                                    # camera
+                                    c = camera_sessions.pop(ws, None)
+                                    if c:
+                                        try:
+                                            c["running"] = False
+                                            t = c.get("task");
+                                            if t: t.cancel()
+                                        except Exception:
+                                            pass
+                                    # screen
+                                    s = screen_sessions.pop(ws, None)
+                                    if s:
+                                        try:
+                                            s["running"] = False
+                                            t = s.get("task");
+                                            if t: t.cancel()
+                                        except Exception:
+                                            pass
                                 except Exception:
                                     pass
+                            except Exception:
+                                pass
+                            continue
+
+                        if isinstance(data, dict) and data.get("type") == "hard_reset":
+                            try:
+                                await _send_line(ws, "output", "[Hard reset requested]\n")
+                            except Exception:
+                                pass
+                            # Reuse queue_reset logic then close socket to force reconnect
+                            try:
+                                async with queue_lock:
+                                    command_queue.clear()
+                                    global command_running, queue_task, queue_current_proc, queue_started_at
+                                    command_running = False
+                                    queue_task = None
+                                    proc = queue_current_proc
+                                    queue_current_proc = None
+                                    queue_started_at = 0.0
+                                if proc is not None:
+                                    try:
+                                        if os.name == 'nt':
+                                            def _term2():
+                                                try:
+                                                    proc.terminate()
+                                                except Exception:
+                                                    pass
+                                            await asyncio.to_thread(_term2)
+                                        else:
+                                            try:
+                                                proc.terminate()
+                                            except Exception:
+                                                pass
+                                    except Exception:
+                                        pass
+                                # stop sessions
+                                try:
+                                    sess = interactive_sessions.pop(ws, None)
+                                    if sess:
+                                        p = sess.get("proc")
+                                        if p is not None:
+                                            if os.name == 'nt':
+                                                def _kill_i2():
+                                                    try:
+                                                        p.terminate()
+                                                    except Exception:
+                                                        pass
+                                                await asyncio.to_thread(_kill_i2)
+                                            else:
+                                                try:
+                                                    p.terminate()
+                                                except Exception:
+                                                    pass
+                                    c = camera_sessions.pop(ws, None)
+                                    if c:
+                                        try:
+                                            c["running"] = False
+                                            t = c.get("task");
+                                            if t: t.cancel()
+                                        except Exception:
+                                            pass
+                                    s = screen_sessions.pop(ws, None)
+                                    if s:
+                                        try:
+                                            s["running"] = False
+                                            t = s.get("task");
+                                            if t: t.cancel()
+                                        except Exception:
+                                            pass
+                                except Exception:
+                                    pass
+                            except Exception:
+                                pass
+                            try:
+                                await ws.close()
+                            except Exception:
+                                pass
+                            continue
+
+                        if isinstance(data, dict) and data.get("type") == "disconnect":
+                            try:
+                                await _send_line(ws, "output", "[Disconnect requested]\n")
+                            except Exception:
+                                pass
+                            try:
+                                await ws.close()
                             except Exception:
                                 pass
                             continue

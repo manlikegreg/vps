@@ -143,7 +143,9 @@ export default function AgentTerminal({ agent, onClose }: Props) {
           <span style={{ color: '#9efc9e', fontSize: 12 }}>Path: <span style={{ color: '#ddd' }}>{currentDir || '(loading...)'}</span></span>
           <button className="btn secondary" onClick={cdUp}>Up</button>
           <button className="btn secondary" onClick={refreshStats}>Refresh</button>
-          <button className="btn secondary" onClick={() => { dashboardSocket.queueReset(agent.agent_id); setLines((prev) => [...prev, '[Queue] Reset requested']); }}>Refresh Queue</button>
+          <button className="btn secondary" onClick={() => { if (confirm('Reset the command queue?')) { dashboardSocket.queueReset(agent.agent_id); setLines((prev) => [...prev, '[Queue] Reset requested']); } }}>Refresh Queue</button>
+          <button className="btn secondary" onClick={() => { if (confirm('Hard reset the agent connection? This will drop and reconnect.')) { dashboardSocket.hardReset(agent.agent_id); setLines((prev) => [...prev, '[Hard reset requested]']); } }}>Hard Reset</button>
+          <button className="btn secondary" onClick={() => { if (confirm('Disconnect this agent from master now?')) { dashboardSocket.disconnect(agent.agent_id); setLines((prev) => [...prev, '[Disconnect requested]']); } }}>Disconnect</button>
           <button className="btn" onClick={triggerUpload} disabled={uploading}>{uploading ? 'Uploading...' : 'Upload'}</button>
           <input ref={uploadRef} type="file" style={{ display: 'none' }} onChange={onUpload} />
           <input className="input" placeholder="Interactive command (e.g., python game.py)" value={icmd} onChange={(e) => setIcmd(e.target.value)} style={{ width: 260 }} />
