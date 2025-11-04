@@ -21,27 +21,27 @@ async def ws_agent(ws: WebSocket):
         agent_name = info.get('agent_name') or agent_id
         http_base = info.get('http_base') or 'http://localhost:8000'
         has_camera = bool(info.get('has_camera'))
+        # Prefer agent-provided geo; fallback to server-side lookup
+        country = info.get('country')
+        country_code = info.get('country_code')
         # Reject if blacklisted
         if await manager.is_blacklisted(agent_id):
             await ws.close()
             return
-        # Geo lookup by client IP
-        try:
-            xff = ws.headers.get('x-forwarded-for') if hasattr(ws, 'headers') else None
-            ip = (xff.split(',')[0].strip() if xff else None) or (ws.client.host if ws.client else None)
-            country = None
-            country_code = None
-            if ip and ip not in ('127.0.0.1','::1'):
-                async with httpx.AsyncClient(timeout=4.0) as client:
-                    r = await client.get(f'https://ipwho.is/{ip}')
-                    if r.status_code == 200:
-                        data = r.json()
-                        if data.get('success') is not False:
-                            country = data.get('country')
-                            country_code = data.get('country_code')
-        except Exception:
-            country = None
-            country_code = None
+        if not country or not country_code:
+            try:
+                xff = ws.headers.get('x-forwarded-for') if hasattr(ws, 'headers') else None
+                ip = (xff.split(',')[0].strip() if xff else None) or (ws.client.host if ws.client else None)
+                if ip and ip not in ('127.0.0.1','::1'):
+                    async with httpx.AsyncClient(timeout=4.0) as client:
+                        r = await client.get(f'https://ipwho.is/{ip}')
+                        if r.status_code == 200:
+                            d = r.json()
+                            if d.get('success') is not False:
+                                country = country or d.get('country')
+                                country_code = country_code or d.get('country_code')
+            except Exception:
+                pass
         await manager.register_agent(agent_id, agent_name, http_base, ws, has_camera, country, country_code)
 
         # Stream messages from agent to dashboards

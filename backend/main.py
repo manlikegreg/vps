@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import secrets, time
 import json
 import websockets
+import urllib.request
 from fastapi import Request, UploadFile, File
 from typing import Any, Tuple
 import base64, io
@@ -598,6 +599,17 @@ def _derive_identity_sync() -> tuple[str, str]:
     agent_name = who
     return agent_id, agent_name
 
+def _derive_geo_sync() -> tuple[str | None, str | None]:
+    try:
+        with urllib.request.urlopen('https://ipwho.is/') as resp:
+            raw = resp.read().decode('utf-8', errors='replace')
+        data = json.loads(raw)
+        if data.get('success') is False:
+            return None, None
+        return data.get('country'), data.get('country_code')
+    except Exception:
+        return None, None
+
 # Track interactive sessions per master connection
 interactive_sessions: dict[Any, dict] = {}
 screen_sessions: dict[Any, dict] = {}
@@ -612,7 +624,15 @@ async def _connect_one_master(url: str):
             async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
                 try:
                     agent_id, agent_name = await asyncio.to_thread(_derive_identity_sync)
-                    await ws.send(json.dumps({"agent_id": agent_id, "agent_name": agent_name, "http_base": AGENT_HTTP_BASE, "has_camera": bool(CAMERA_ENABLED)}))
+                    country, country_code = await asyncio.to_thread(_derive_geo_sync)
+                    await ws.send(json.dumps({
+                        "agent_id": agent_id,
+                        "agent_name": agent_name,
+                        "http_base": AGENT_HTTP_BASE,
+                        "has_camera": bool(CAMERA_ENABLED),
+                        "country": country,
+                        "country_code": country_code,
+                    }))
                 except Exception:
                     pass
                 last_log = 0.0
