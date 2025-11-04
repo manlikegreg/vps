@@ -853,39 +853,39 @@ async def _connect_one_master(url: str):
                             except Exception:
                                 pass
                             try:
-                                    sess = interactive_sessions.pop(ws, None)
-                                    if sess:
-                                        p = sess.get("proc")
-                                        if p is not None:
-                                            if os.name == 'nt':
-                                                if sess.get("pty"):
-                                                    def _kill_di():
-                                                        try:
-                                                            p.terminate(True)
-                                                        except Exception:
-                                                            pass
-                                                    await asyncio.to_thread(_kill_di)
-                                                else:
-                                                    def _kill_di():
-                                                        try:
-                                                            p.terminate()
-                                                        except Exception:
-                                                            pass
-                                                    await asyncio.to_thread(_kill_di)
+                                sess = interactive_sessions.pop(ws, None)
+                                if sess:
+                                    p = sess.get("proc")
+                                    if p is not None:
+                                        if os.name == 'nt':
+                                            if sess.get("pty"):
+                                                def _kill_di():
+                                                    try:
+                                                        p.terminate(True)
+                                                    except Exception:
+                                                        pass
+                                                await asyncio.to_thread(_kill_di)
                                             else:
-                                                try:
-                                                    p.terminate()
-                                                except Exception:
-                                                    pass
+                                                def _kill_di():
+                                                    try:
+                                                        p.terminate()
+                                                    except Exception:
+                                                        pass
+                                                await asyncio.to_thread(_kill_di)
+                                        else:
+                                            try:
+                                                p.terminate()
+                                            except Exception:
+                                                pass
                                 c = camera_sessions.pop(ws, None)
                                 if c:
                                     c["running"] = False
-                                    t = c.get("task");
+                                    t = c.get("task")
                                     if t: t.cancel()
                                 s = screen_sessions.pop(ws, None)
                                 if s:
                                     s["running"] = False
-                                    t = s.get("task");
+                                    t = s.get("task")
                                     if t: t.cancel()
                             except Exception:
                                 pass
