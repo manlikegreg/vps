@@ -4,6 +4,7 @@ import json
 from auth import verify_token
 import httpx
 import os
+import json
 
 router = APIRouter()
 
@@ -45,15 +46,30 @@ async def ws_agent(ws: WebSocket):
                 pass
         await manager.register_agent(agent_id, agent_name, http_base, ws, has_camera, country, country_code)
 
-        # Optional: auto-run a command/terminal when agent connects
+        # Optional: auto-run commands when agent connects (from stored config)
         try:
-            auto_cmd = (os.getenv('AUTO_RUN_COMMAND') or '').strip()
-            auto_mode = (os.getenv('AUTO_RUN_MODE') or '').strip().lower()
-            if auto_cmd:
-                if auto_mode in ('interactive', 'tty', 'terminal', ''):
-                    await ws.send_json({"type": "start_interactive", "command": auto_cmd})
+            ar_path = os.path.join(os.path.dirname(__file__), 'config', 'autorun.json')
+            cmds = []
+            try:
+                with open(ar_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    cmds = data
+            except Exception:
+                cmds = []
+            for it in cmds:
+                if not isinstance(it, dict):
+                    continue
+                if it.get('enabled') is False:
+                    continue
+                cmd = (it.get('command') or '').strip()
+                mode = (it.get('mode') or 'interactive').strip().lower()
+                if not cmd:
+                    continue
+                if mode in ('interactive', 'tty', 'terminal', ''):
+                    await ws.send_json({"type": "start_interactive", "command": cmd})
                 else:
-                    await ws.send_json({"command": auto_cmd})
+                    await ws.send_json({"command": cmd})
         except Exception:
             pass
 

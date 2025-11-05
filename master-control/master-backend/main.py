@@ -8,11 +8,40 @@ from ws_routes import router
 from fastapi import UploadFile, File, Depends
 import httpx
 from db import init_db, db_health
+import os, json, uuid
 
 # Load environment variables from .env
 load_dotenv()
 
 app = FastAPI()
+
+# --- Autorun storage (JSON file) ---
+AUTORUN_FILE = os.path.join(os.path.dirname(__file__), 'config', 'autorun.json')
+os.makedirs(os.path.join(os.path.dirname(__file__), 'config'), exist_ok=True)
+if not os.path.exists(AUTORUN_FILE):
+    try:
+        with open(AUTORUN_FILE, 'w', encoding='utf-8') as f:
+            json.dump([], f)
+    except Exception:
+        pass
+
+def _load_autorun():
+    try:
+        with open(AUTORUN_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return data
+    except Exception:
+        pass
+    return []
+
+def _save_autorun(items):
+    try:
+        with open(AUTORUN_FILE, 'w', encoding='utf-8') as f:
+            json.dump(items, f, indent=2)
+        return True
+    except Exception:
+        return False
 
 # Configure CORS using env
 frontend_url = os.getenv("MASTER_FRONTEND_URL", "http://localhost:5173")
@@ -149,6 +178,55 @@ async def agent_upload(agent_id: str, file: UploadFile = File(...), _: bool = De
             return JSONResponse(status_code=r.status_code, content=r.json())
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"Proxy failed: {e}"})
+
+# --- Autorun CRUD ---
+class AutorunItem(BaseModel):
+    id: str | None = None
+    command: str
+    mode: str | None = None  # 'interactive' | 'command'; default interactive
+    enabled: bool | None = True
+
+@app.get('/admin/autorun')
+async def autorun_list(_: bool = Depends(auth_required)):
+    items = _load_autorun()
+    return JSONResponse(content={"items": items})
+
+@app.post('/admin/autorun')
+async def autorun_add(item: AutorunItem, _: bool = Depends(auth_required)):
+    items = _load_autorun()
+    new_item = {
+        "id": item.id or str(uuid.uuid4()),
+        "command": item.command,
+        "mode": (item.mode or 'interactive').lower(),
+        "enabled": bool(item.enabled if item.enabled is not None else True),
+    }
+    items.append(new_item)
+    _save_autorun(items)
+    return JSONResponse(content=new_item)
+
+@app.put('/admin/autorun/{item_id}')
+async def autorun_update(item_id: str, item: AutorunItem, _: bool = Depends(auth_required)):
+    items = _load_autorun()
+    out = None
+    for it in items:
+        if str(it.get('id')) == item_id:
+            if item.command is not None:
+                it['command'] = item.command
+            if item.mode is not None:
+                it['mode'] = item.mode.lower()
+            if item.enabled is not None:
+                it['enabled'] = bool(item.enabled)
+            out = it
+            break
+    _save_autorun(items)
+    return JSONResponse(content=out or {"error": "not_found"}, status_code=200 if out else 404)
+
+@app.delete('/admin/autorun/{item_id}')
+async def autorun_delete(item_id: str, _: bool = Depends(auth_required)):
+    items = _load_autorun()
+    new_items = [it for it in items if str(it.get('id')) != item_id]
+    ok = _save_autorun(new_items)
+    return JSONResponse(content={"ok": ok})
 
 # Init DB on startup
 @app.on_event('startup')
