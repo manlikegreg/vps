@@ -9,6 +9,8 @@ export default function KeylogPanel({ open, agentId, agentName, onClose }: { ope
   const [typed, setTyped] = useState<string>('')
   const [cursor, setCursor] = useState<number>(0)
   const typedRef = useRef<HTMLDivElement | null>(null)
+  const typedStateRef = useRef<string>('')
+  const cursorRef = useRef<number>(0)
   // Dedup guard for rapid duplicate events
   const lastRawRef = useRef<string>('')
   const lastTsRef = useRef<number>(0)
@@ -55,50 +57,74 @@ export default function KeylogPanel({ open, agentId, agentName, onClose }: { ope
       }
       lastRawRef.current = s
       lastTsRef.current = now
-      // Handle special keys and update simulated buffer
+      // Handle special keys and update simulated buffer (use refs to avoid stale closures)
+      const setTypedAndCursor = (nt: string, nc: number) => {
+        typedStateRef.current = nt
+        cursorRef.current = Math.max(0, Math.min(nt.length, nc))
+        setTyped(nt)
+        setCursor(cursorRef.current)
+        if (typedRef.current) typedRef.current.scrollTop = typedRef.current.scrollHeight
+      }
       const applyInsert = (text: string) => {
-        setTyped((prev) => prev.slice(0, cursor) + text + prev.slice(cursor))
-        setCursor((c) => c + text.length)
+        const t = typedStateRef.current
+        const c = cursorRef.current
+        const nt = t.slice(0, c) + text + t.slice(c)
+        setTypedAndCursor(nt, c + text.length)
       }
       const backspace = () => {
-        if (cursor > 0) { setTyped((prev) => prev.slice(0, cursor - 1) + prev.slice(cursor)); setCursor((c)=>Math.max(0, c-1)) }
+        const t = typedStateRef.current
+        const c = cursorRef.current
+        if (c > 0) {
+          const nt = t.slice(0, c - 1) + t.slice(c)
+          setTypedAndCursor(nt, c - 1)
+        }
       }
       const del = () => {
-        setTyped((prev) => (cursor < prev.length ? prev.slice(0, cursor) + prev.slice(cursor+1) : prev))
+        const t = typedStateRef.current
+        const c = cursorRef.current
+        if (c < t.length) {
+          const nt = t.slice(0, c) + t.slice(c + 1)
+          setTypedAndCursor(nt, c)
+        }
       }
-      const left = () => setCursor((c)=>Math.max(0, c-1))
-      const right = () => setCursor((c, _prev?: any)=>Math.min(typed.length, c+1))
-      const home = () => setCursor((c)=>{
-        const t = typed; let i = c; while (i>0 && t[i-1] !== '\n') i--; return i
-      })
-      const end = () => setCursor((c)=>{
-        const t = typed; let i = c; while (i<t.length && t[i] !== '\n') i++; return i
-      })
-      const up = () => setCursor((c)=>{
-        const t = typed
+      const left = () => setTypedAndCursor(typedStateRef.current, cursorRef.current - 1)
+      const right = () => setTypedAndCursor(typedStateRef.current, cursorRef.current + 1)
+      const home = () => {
+        const t = typedStateRef.current
+        let i = cursorRef.current
+        while (i > 0 && t[i - 1] !== '\n') i--
+        setTypedAndCursor(t, i)
+      }
+      const end = () => {
+        const t = typedStateRef.current
+        let i = cursorRef.current
+        while (i < t.length && t[i] !== '\n') i++
+        setTypedAndCursor(t, i)
+      }
+      const up = () => {
+        const t = typedStateRef.current
+        let c = cursorRef.current
         let col = 0, i = c
         while (i>0 && t[i-1] !== '\n') { col++; i-- }
-        if (i===0) return c
-        // i is at start of current line; move to end of prev line
+        if (i===0) return
         let j = i-1
         while (j>0 && t[j-1] !== '\n') j--
         const prevLen = (i - j)
-        return j + Math.min(col, prevLen-1)
-      })
-      const down = () => setCursor((c)=>{
-        const t = typed
+        setTypedAndCursor(t, j + Math.min(col, Math.max(0, prevLen-1)))
+      }
+      const down = () => {
+        const t = typedStateRef.current
+        let c = cursorRef.current
         let col = 0, i = c
         while (i>0 && t[i-1] !== '\n') { col++; i-- }
-        // find end of current line
         let endCur = c
         while (endCur<t.length && t[endCur] !== '\n') endCur++
-        if (endCur>=t.length) return c
-        // start of next line
+        if (endCur>=t.length) return
         let j = endCur+1
         let nextLen = 0
         while (j+nextLen<t.length && t[j+nextLen] !== '\n') nextLen++
-        return j + Math.min(col, nextLen)
-      })
+        setTypedAndCursor(t, j + Math.min(col, nextLen))
+      }
 
       if (s.startsWith('Key.')) {
         if (timerRef.current) { window.clearTimeout(timerRef.current); timerRef.current = null }
@@ -144,6 +170,8 @@ export default function KeylogPanel({ open, agentId, agentName, onClose }: { ope
   }, [agentId, open])
 
   useEffect(() => {
+    typedStateRef.current = typed
+    cursorRef.current = cursor
     const el = typedRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [typed, cursor])
