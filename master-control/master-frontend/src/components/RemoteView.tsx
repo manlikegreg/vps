@@ -88,39 +88,42 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
     setRecording(false)
   }
 
+  const mapToAgent = (clientX: number, clientY: number) => {
+    const img = imgRef.current
+    if (!img || !nativeW || !nativeH) return { rx: 0, ry: 0 }
+    const rect = img.getBoundingClientRect()
+    const cw = rect.width, ch = rect.height
+    const scale = Math.min(cw / nativeW, ch / nativeH)
+    const dw = nativeW * scale, dh = nativeH * scale
+    const padX = (cw - dw) / 2, padY = (ch - dh) / 2
+    const lx = Math.max(0, Math.min(dw, (clientX - rect.left) - padX))
+    const ly = Math.max(0, Math.min(dh, (clientY - rect.top) - padY))
+    const rx = Math.round(lx / scale)
+    const ry = Math.round(ly / scale)
+    return { rx, ry }
+  }
+
   const handleClick = (e: React.MouseEvent) => {
     // clicks handled via down/up; keep for single-click fallback
     if (!control || !imgRef.current || !nativeW || !nativeH) return
-    const rect = imgRef.current.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
-    const realX = Math.round((x / rect.width) * nativeW)
-    const realY = Math.round((y / rect.height) * nativeH)
-    dashboardSocket.sendMouse(agentId, { action: 'click', x: realX, y: realY, button: e.button === 2 ? 'right' : 'left' })
+    const { rx, ry } = mapToAgent(e.clientX, e.clientY)
+    dashboardSocket.sendMouse(agentId, { action: 'click', x: rx, y: ry, button: e.button === 2 ? 'right' : 'left' })
   }
 
   const onMouseDown = (e: React.MouseEvent<HTMLImageElement>) => {
     if (!control || !imgRef.current || !nativeW || !nativeH) return
     e.preventDefault()
-    const rect = imgRef.current.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
-    const realX = Math.round((x / rect.width) * nativeW)
-    const realY = Math.round((y / rect.height) * nativeH)
+    const { rx, ry } = mapToAgent(e.clientX, e.clientY)
     const button = e.button === 2 ? 'right' : 'left'
-    dashboardSocket.sendMouse(agentId, { action: 'down', x: realX, y: realY, button })
+    dashboardSocket.sendMouse(agentId, { action: 'down', x: rx, y: ry, button })
   }
 
   const onMouseUp = (e: React.MouseEvent<HTMLImageElement>) => {
     if (!control || !imgRef.current || !nativeW || !nativeH) return
     e.preventDefault()
-    const rect = imgRef.current.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
-    const realX = Math.round((x / rect.width) * nativeW)
-    const realY = Math.round((y / rect.height) * nativeH)
+    const { rx, ry } = mapToAgent(e.clientX, e.clientY)
     const button = e.button === 2 ? 'right' : 'left'
-    dashboardSocket.sendMouse(agentId, { action: 'up', x: realX, y: realY, button })
+    dashboardSocket.sendMouse(agentId, { action: 'up', x: rx, y: ry, button })
   }
 
   const onMouseMove = (e: React.MouseEvent<HTMLImageElement>) => {
@@ -131,9 +134,8 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
     setCursorXY({ x, y })
     if (!control) return
     if ((e.buttons & 1) === 0 && (e.buttons & 2) === 0) return // only send while a button is held
-    const realX = Math.round((x / rect.width) * nativeW)
-    const realY = Math.round((y / rect.height) * nativeH)
-    dashboardSocket.sendMouse(agentId, { action: 'move', x: realX, y: realY })
+    const { rx, ry } = mapToAgent(e.clientX, e.clientY)
+    dashboardSocket.sendMouse(agentId, { action: 'move', x: rx, y: ry })
   }
 
   const onWheel = (e: React.WheelEvent<HTMLImageElement>) => {
@@ -233,7 +235,7 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
       </div>
       <div style={{ position: 'relative', border: '1px solid #222', borderRadius: 6, background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: expanded ? 520 : 280, height: expanded ? 520 : 280 }}>
         {frame ? (
-          <img ref={imgRef} src={frame} style={{ maxWidth: '100%', width: '100%', height: '100%', objectFit: 'contain', cursor: control ? 'none' : 'default' }} onDoubleClick={(e)=>{ if (!imgRef.current||!nativeW||!nativeH) return; const r=imgRef.current.getBoundingClientRect(); const rx=Math.round(((e.clientX-r.left)/r.width)*nativeW); const ry=Math.round(((e.clientY-r.top)/r.height)*nativeH); dashboardSocket.sendMouse(agentId,{action:'click',x:rx,y:ry,button:'left'}); setTimeout(()=>dashboardSocket.sendMouse(agentId,{action:'click',x:rx,y:ry,button:'left'}),50) }} onClick={handleClick} onMouseDown={onMouseDown} onMouseUp={onMouseUp} onMouseMove={onMouseMove} onWheel={onWheel} onContextMenu={(e) => { if (control) e.preventDefault(); if (!imgRef.current||!nativeW||!nativeH) return; const r=imgRef.current.getBoundingClientRect(); const rx=Math.round(((e.clientX-r.left)/r.width)*nativeW); const ry=Math.round(((e.clientY-r.top)/r.height)*nativeH); dashboardSocket.sendMouse(agentId,{action:'click',x:rx,y:ry,button:'right'}) }} />
+          <img ref={imgRef} src={frame} style={{ maxWidth: '100%', width: '100%', height: '100%', objectFit: 'contain', cursor: control ? 'none' : 'default' }} onDoubleClick={(e)=>{ if (!control) return; const { rx, ry } = mapToAgent(e.clientX, e.clientY); dashboardSocket.sendMouse(agentId,{action:'click',x:rx,y:ry,button:'left'}); setTimeout(()=>dashboardSocket.sendMouse(agentId,{action:'click',x:rx,y:ry,button:'left'}),50) }} onClick={handleClick} onMouseDown={onMouseDown} onMouseUp={onMouseUp} onMouseMove={onMouseMove} onWheel={onWheel} onContextMenu={(e) => { if (!control) return; e.preventDefault(); const { rx, ry } = mapToAgent(e.clientX, e.clientY); dashboardSocket.sendMouse(agentId,{action:'click',x:rx,y:ry,button:'right'}) }} />
         ) : (
           <div style={{ color: '#777', padding: 20 }}>{running ? 'Waiting for frames...' : 'Not running'}</div>
         )}
