@@ -3,7 +3,7 @@ html, body, #root { height: 100%; }
 body { margin: 0; font-family: Consolas, 'Courier New', monospace; }
 
 .app { min-height: 100%; display: flex; flex-direction: column; }
-.header { padding: 12px 16px; border-bottom: 1px solid #222; background: #121212; display:flex; align-items:center; justify-content:space-between; }
+.header { padding: 12px 16px; border-bottom: 1px solid #222; background: #121212; display:flex; align-items:center; justify-content:space-between; flex-wrap: wrap; gap: 8px; }
 .header h1 { color: #9efc9e; font-size: 18px; margin: 0; }
 .header p { color: #a0a0a0; margin: 4px 0 0; font-size: 12px; }
 
@@ -23,3 +23,19 @@ body { margin: 0; font-family: Consolas, 'Courier New', monospace; }
 .agent-id { color:#777; font-size:11px; }
 .status-dot { width:8px; height:8px; border-radius:4px; background:#0f5; display:inline-block; margin-right:8px; }
 .status-dot.red { background:#f55; }
+
+/* Responsive layout */
+@media (max-width: 1024px) {
+  .sidebar { width: 240px; }
+}
+@media (max-width: 820px) {
+  .content { flex-direction: column; }
+  .sidebar { width: 100%; border-right: none; border-bottom: 1px solid #222; }
+  .main { padding: 8px; }
+  .agent-item { flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+}
+@media (max-width: 480px) {
+  .header h1 { font-size: 16px; }
+  .btn { padding: 6px 8px; }
+  .sidebar { padding: 8px; }
+}

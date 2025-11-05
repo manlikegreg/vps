@@ -18,7 +18,7 @@ export default function MastersPanel({ open, urls, onRefresh, onAdd, onUpdate, o
   useEffect(() => { if (open) onRefresh() }, [open])
 
   return (
-    <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: open ? 420 : 0, background: '#0f0f0f', borderLeft: '1px solid #222', overflow: 'hidden', transition: 'width 0.2s ease', zIndex: 1000 }}>
+    <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: open ? 'min(420px, 100vw)' : 0, background: '#0f0f0f', borderLeft: '1px solid #222', overflow: 'hidden', transition: 'width 0.2s ease', zIndex: 1000 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 10, borderBottom: '1px solid #222' }}>
         <div style={{ color: '#9efc9e' }}>Agent Masters</div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
