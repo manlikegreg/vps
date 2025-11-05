@@ -5,7 +5,20 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy import text
 from models import Base
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:admin@127.0.0.1:5432/postgres")
+DATABASE_URL_RAW = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:admin@127.0.0.1:5432/postgres")
+
+def _normalize_db_url(url: str) -> str:
+    try:
+        if url.startswith("postgres://"):
+            return "postgresql+asyncpg://" + url[len("postgres://"):]
+        if url.startswith("postgresql://") and "+" not in url.split("://",1)[0]:
+            # postgres variant without driver
+            return "postgresql+asyncpg://" + url[len("postgresql://"):]
+        return url
+    except Exception:
+        return url
+
+DATABASE_URL = _normalize_db_url(DATABASE_URL_RAW)
 
 _engine = None
 _Session: async_sessionmaker[AsyncSession] | None = None
