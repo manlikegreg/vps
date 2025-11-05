@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from agent_manager import manager
 from ws_routes import router
-from fastapi import UploadFile, File, Depends
+from fastapi import UploadFile, File, Depends, Form
 import httpx
 from db import init_db, db_health, get_session, reset_db
 import os, json, uuid
@@ -255,6 +255,33 @@ async def autorun_delete(item_id: str, _: bool = Depends(auth_required)):
     return JSONResponse(content={"ok": ok})
 
 # --- History endpoints ---
+@app.post('/admin/history/upload')
+async def history_upload(file: UploadFile = File(...), agent_id: str = Form(...), kind: str = Form(...), width: int | None = Form(None), height: int | None = Form(None), note: str | None = Form(None), _: bool = Depends(auth_required)):
+    try:
+        # derive subdir by kind
+        subdir = os.path.join(MEDIA_ROOT, kind, datetime.utcnow().strftime('%Y%m'))
+        os.makedirs(subdir, exist_ok=True)
+        # decide extension by content type
+        ct = (file.content_type or '').lower()
+        ext = 'bin'
+        if 'webm' in ct: ext = 'webm'
+        elif 'mp4' in ct: ext = 'mp4'
+        elif 'png' in ct: ext = 'png'
+        elif 'jpeg' in ct or 'jpg' in ct: ext = 'jpg'
+        name = f"{uuid.uuid4().hex}.{ext}"
+        path = os.path.join(subdir, name)
+        data = await file.read()
+        with open(path, 'wb') as f:
+            f.write(data)
+        rel = os.path.relpath(path, MEDIA_ROOT).replace('\\','/')
+        storage_url = f"/media/{rel}"
+        async with await get_session() as s:
+            rec = EventFile(id=uuid.uuid4(), ts=datetime.utcnow(), agent_id=str(agent_id), kind=str(kind), storage_url=storage_url, size_bytes=len(data), width=width, height=height, note=note)
+            s.add(rec); await s.commit()
+        return JSONResponse(content={"ok": True, "storage_url": storage_url})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
 @app.get('/admin/history')
 async def history_list(kind: str | None = None, agent_id: str | None = None, limit: int = 100, _: bool = Depends(auth_required)):
     async with await get_session() as s:
