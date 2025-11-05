@@ -117,15 +117,15 @@ export default function HistoryPanel({ open, onClose, agentId: fixedAgentId }: {
                   <div style={{ color: '#ddd', fontSize: 13 }}>{it.kind} • {new Date(it.ts).toLocaleString()} • {it.agent_id}</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
                     {it.kind !== 'keylog' ? (
-                      <img src={it.storage_url} alt="media" style={{ maxWidth: 160, maxHeight: 90, border: '1px solid #222', borderRadius: 4 }} />
+                      <img src={`${apiBase}${it.storage_url}`} alt="media" style={{ maxWidth: 160, maxHeight: 90, border: '1px solid #222', borderRadius: 4 }} />
                     ) : (
-                      <a href={it.storage_url} target="_blank" rel="noreferrer" style={{ color: '#9efc9e', fontSize: 12 }}>open keylog</a>
+                      <a href={`${apiBase}${it.storage_url}`} target="_blank" rel="noreferrer" style={{ color: '#9efc9e', fontSize: 12 }}>open keylog</a>
                     )}
-                    <div style={{ color: '#777', fontSize: 12 }}>size: {it.size_bytes || 0} • {it.width || '?'}x{it.height || '?'}</div>
+                    <div style={{ color: '#777', fontSize: 12 }}>size: {typeof it.size_bytes === 'number' ? `${(it.size_bytes/1024/1024).toFixed(2)} MB` : '0.00 MB'} • {it.width || '?'}x{it.height || '?'}</div>
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <a href={it.storage_url} className="btn secondary" target="_blank" rel="noreferrer">Open</a>
+                    <a href={`${apiBase}${it.storage_url}`} className="btn secondary" target="_blank" rel="noreferrer">Open</a>
                 </div>
               </div>
             ))}
