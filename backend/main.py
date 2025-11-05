@@ -28,15 +28,14 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s:     %(message)s')
 load_dotenv()
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 ALLOWED_ORIGINS = [FRONTEND_URL]
-# Hardcoded master control URL; change here when needed
-MASTER_CONTROL_WS_URL = 'wss://mastervpsback.onrender.com/ws/agent'
-# Optional: connect to multiple masters; add more URLs here
-MASTER_CONTROL_WS_URLS = [
-    MASTER_CONTROL_WS_URL,
-    'ws://localhost:9000/ws/agent',
-]
+# Master control URLs (from env)
+MASTER_CONTROL_WS_URL = (os.getenv('MASTER_CONTROL_WS_URL', '') or '').strip()
+MASTER_CONTROL_WS_URLS_ENV = (os.getenv('MASTER_CONTROL_WS_URLS', '') or '').strip()
+DEFAULT_MASTER_URLS = [u.strip() for u in MASTER_CONTROL_WS_URLS_ENV.split(',') if u.strip()]
+if not DEFAULT_MASTER_URLS and MASTER_CONTROL_WS_URL:
+    DEFAULT_MASTER_URLS = [MASTER_CONTROL_WS_URL]
 # Dynamic masters management (persisted)
-MASTERS_FILE = os.path.join(os.getcwd(), 'masters.json')
+MASTERS_FILE = os.getenv('MASTERS_FILE', os.path.join(os.getcwd(), 'masters.json'))
 master_urls: list[str] = []
 master_tasks: dict[str, asyncio.Task] = {}
 master_stop: dict[str, bool] = {}
@@ -48,8 +47,8 @@ COMMAND_TIMEOUT_SECONDS = int(os.getenv('COMMAND_TIMEOUT_SECONDS', '30'))
 # Remote view/control settings
 SCREEN_MAX_FPS = int(os.getenv('SCREEN_MAX_FPS', '10'))
 SCREEN_DEFAULT_QUALITY = int(os.getenv('SCREEN_QUALITY', '60'))  # JPEG 1-95
-REMOTE_CONTROL_ENABLED = True
-SCREEN_AUTO_START = False
+REMOTE_CONTROL_ENABLED = os.getenv('REMOTE_CONTROL_ENABLED', '1').lower() in ('1','true','yes','on')
+SCREEN_AUTO_START = os.getenv('SCREEN_AUTO_START', '0').lower() in ('1','true','yes','on')
 CAMERA_ENABLED = os.getenv('CAMERA_ENABLED', '1').lower() in ('1','true','yes','on')
 # TLS pinning (optional)
 MASTER_CERT_SHA256 = (os.getenv('MASTER_CERT_SHA256', '') or '').strip().lower().replace(':','')
@@ -758,8 +757,8 @@ def _load_masters_sync() -> list[str]:
                 return [str(u) for u in data if isinstance(u, str) and u.strip()]
     except Exception:
         pass
-    # Fallback to defaults
-    return [u for u in MASTER_CONTROL_WS_URLS if isinstance(u, str) and u.strip()]
+# Fallback to defaults
+    return [u for u in DEFAULT_MASTER_URLS if isinstance(u, str) and u.strip()]
 
 def _save_masters_sync(urls: list[str]) -> None:
     try:
@@ -2139,9 +2138,9 @@ async def start_master_connections():
     try:
         master_urls = await asyncio.to_thread(_load_masters_sync)
     except Exception:
-        master_urls = [u for u in MASTER_CONTROL_WS_URLS if isinstance(u, str) and u.strip()]
+        master_urls = [u for u in DEFAULT_MASTER_URLS if isinstance(u, str) and u.strip()]
     if not master_urls:
-        master_urls = [MASTER_CONTROL_WS_URL]
+        master_urls = [u for u in DEFAULT_MASTER_URLS if isinstance(u, str) and u.strip()]
     for u in master_urls:
         master_stop[u] = False
         master_tasks[u] = asyncio.create_task(_connect_one_master(u))

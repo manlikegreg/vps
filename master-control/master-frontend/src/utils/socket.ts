@@ -11,7 +11,7 @@ type DashboardEvent =
 
 class DashboardSocket {
   private ws: WebSocket | null = null;
-  private baseUrl = (import.meta as any).env?.VITE_DASHBOARD_WS_URL || 'ws://localhost:9000/ws/dashboard';
+  private baseUrl = (import.meta as any).env?.VITE_DASHBOARD_WS_URL || ((((import.meta as any).env?.VITE_MASTER_API_URL || (typeof window !== 'undefined' ? window.location.origin : '')).replace(/^http/i, 'ws')) + '/ws/dashboard');
   private token: string | null = null;
   private agents: Agent[] = [];
   private listeners: { [agentId: string]: ((line: string) => void)[] } = {};

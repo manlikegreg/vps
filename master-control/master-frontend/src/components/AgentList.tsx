@@ -16,7 +16,7 @@ export default function AgentList({ onOpenTerminal }: Props) {
     dashboardSocket.onAgents(setAgents)
     // Load blacklist
     const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
-    const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || 'http://localhost:9000'
+    const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || (typeof window !== 'undefined' ? window.location.origin : '')
     const loadBL = async () => {
       try {
         const r = await fetch(`${apiBase}/admin/blacklist`, { headers: { Authorization: `Bearer ${token}` } })
@@ -28,7 +28,7 @@ export default function AgentList({ onOpenTerminal }: Props) {
 
   const toggleBlacklist = async (agentId: string, makeBlack: boolean) => {
     const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
-    const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || 'http://localhost:9000'
+    const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || (typeof window !== 'undefined' ? window.location.origin : '')
     try {
       const url = makeBlack ? `${apiBase}/admin/agents/${encodeURIComponent(agentId)}/blacklist` : `${apiBase}/admin/agents/${encodeURIComponent(agentId)}/whitelist`
       const r = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
@@ -54,7 +54,7 @@ export default function AgentList({ onOpenTerminal }: Props) {
               </div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 <button className="btn" onClick={() => onOpenTerminal(a)}>Open Terminal</button>
-                <button className="btn secondary" onClick={async () => { if (!confirm('Disconnect this agent?')) return; try { const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''; const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || 'http://localhost:9000'; await fetch(`${apiBase}/admin/agents/${encodeURIComponent(a.agent_id)}/disconnect`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }); } catch {} }}>Disconnect</button>
+                <button className="btn secondary" onClick={async () => { if (!confirm('Disconnect this agent?')) return; try { const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''; const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || (typeof window !== 'undefined' ? window.location.origin : ''); await fetch(`${apiBase}/admin/agents/${encodeURIComponent(a.agent_id)}/disconnect`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }); } catch {} }}>Disconnect</button>
                 {!isBlack ? (
                   <button className="btn secondary" onClick={() => { if (confirm('Blacklist this agent? It will be refused until whitelisted.')) toggleBlacklist(a.agent_id, true) }}>Blacklist</button>
                 ) : (
