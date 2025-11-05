@@ -106,8 +106,12 @@ async def ws_dashboard(ws: WebSocket):
                 data = {}
             target = data.get('target')
             if target and 'command' in data:
-                command = data.get('command')
-                ok = await manager.forward_command(target, command)
+                # If session_id is present, keep JSON so agent can route per-pane; else send plain text
+                if isinstance(data.get('session_id'), str):
+                    ok = await manager.forward_json(target, data)
+                else:
+                    command = data.get('command')
+                    ok = await manager.forward_command(target, command)
                 if not ok:
                     await ws.send_json({"type": "error", "message": f"Agent {target} not available"})
             elif target and data.get('type') in (

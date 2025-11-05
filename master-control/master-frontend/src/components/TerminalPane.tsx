@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 export default function TerminalPane({
   interactive,
   lines,
+  onEcho,
   onSend,
   stopInteractive,
   height = 280,
@@ -10,6 +11,7 @@ export default function TerminalPane({
 }: {
   interactive: boolean
   lines: string[]
+  onEcho?: (s: string) => void
   onSend: (cmd: string) => void
   stopInteractive: () => void
   height?: number
@@ -35,6 +37,7 @@ export default function TerminalPane({
     lastSendRef.current = { cmd, at: now }
     historyRef.current.push(cmd)
     historyIndexRef.current = historyRef.current.length
+    if (onEcho) onEcho(`> ${cmd}`)
     onSend(cmd)
     setInput('')
   }
@@ -58,6 +61,7 @@ export default function TerminalPane({
             if (k === 'Enter') { e.preventDefault(); send(); return }
             if (e.ctrlKey && k.toLowerCase() === 'c') {
               e.preventDefault()
+              if (onEcho) onEcho('^C')
               stopInteractive()
               setInput('')
               return

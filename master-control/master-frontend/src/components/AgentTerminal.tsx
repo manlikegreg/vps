@@ -150,12 +150,14 @@ export default function AgentTerminal({ agent, onClose }: Props) {
 
   const cdUp = () => {
     lastCmdRef.current = 'cd ..'
-    dashboardSocket.sendCommand(agent.agent_id, 'cd ..')
+    const sid = `pane-${(linkExplorerPane ?? lastPaneRef.current)}`
+    dashboardSocket.sendPaneCommand(agent.agent_id, 'cd ..', sid)
   }
   const cdTo = (name: string) => {
-    const cmd = `cd "${name.replace(/\"/g, '\\\"').replace(/"/g, '\\"')}"`
+    const cmd = `cd \"${name.replace(/\\\"/g, '\\\\\\\"').replace(/\"/g, '\\\"')}\"`
     lastCmdRef.current = cmd
-    dashboardSocket.sendCommand(agent.agent_id, cmd)
+    const sid = `pane-${(linkExplorerPane ?? lastPaneRef.current)}`
+    dashboardSocket.sendPaneCommand(agent.agent_id, cmd, sid)
   }
 
   const download = async (name: string) => {
@@ -342,7 +344,7 @@ export default function AgentTerminal({ agent, onClose }: Props) {
                     key={idx}
                     interactive={interactive}
                     lines={linesArr[idx] || []}
-                    onLocalEcho={(s)=>appendLocalEcho(s, idx)}
+                    onEcho={(s)=>appendLocalEcho(s, idx)}
                     onSend={(cmd) => { lastPaneRef.current = idx; lastCmdRef.current = cmd; if (interactive) { dashboardSocket.sendStdin(agent.agent_id, cmd); } else { dashboardSocket.sendPaneCommand(agent.agent_id, cmd, `pane-${idx}`); } }}
                     stopInteractive={stopInteractiveGlobal}
                     height={termH}
