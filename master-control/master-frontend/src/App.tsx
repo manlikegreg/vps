@@ -9,7 +9,8 @@ export default function App() {
   const [status, setStatus] = useState<'connected' | 'disconnected'>('disconnected')
   const [token, setToken] = useState<string | null>(null)
   const [verified, setVerified] = useState<boolean>(false)
-  const [dbOk, setDbOk] = useState<boolean | null>(null)
+const [dbOk, setDbOk] = useState<boolean | null>(null)
+  const [dbKind, setDbKind] = useState<string | null>(null)
 
   useEffect(() => {
     const existing = typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null
@@ -28,10 +29,21 @@ export default function App() {
       } catch {
         setVerified(false)
       }
-      try {
+try {
         const r = await fetch(`${apiBase}/admin/db/health`, { headers: { Authorization: `Bearer ${token}` } })
-        setDbOk(r.ok)
-      } catch { setDbOk(false) }
+        if (r.ok) {
+          const j = await r.json()
+          const kind = String(j?.dialect ?? j?.database ?? '').toLowerCase() || null
+          setDbKind(kind)
+          setDbOk(true)
+        } else {
+          setDbOk(false)
+          setDbKind(null)
+        }
+      } catch {
+        setDbOk(false)
+        setDbKind(null)
+      }
     }
     check()
   }, [token])
@@ -62,7 +74,7 @@ export default function App() {
             </div>
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               <span className={`status-dot ${dbOk ? '' : 'red'}`} />
-              <span style={{ color: '#aaa', fontSize: 12 }}>DB {dbOk === null ? '...' : (dbOk ? 'ok' : 'error')}</span>
+<span style={{ color: '#aaa', fontSize: 12 }}>DB {dbOk === null ? '...' : (dbOk ? (dbKind || 'ok') : 'error')}</span>
             </div>
           </div>
           {verified && (

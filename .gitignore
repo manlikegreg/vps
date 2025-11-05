@@ -23,6 +23,7 @@ token.txt.txt
 master-control/master-backend/media/
 master-control/master-backend/config/autorun.json
 master-control/master-backend/config/agents.json
+master-control/master-backend/master_control.db
 
 # OS
 .DS_Store

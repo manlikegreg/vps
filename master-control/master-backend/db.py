@@ -5,8 +5,10 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy import text
 from models import Base
 
-DATABASE_URL_RAW = os.getenv("DATABASE_URL", "")
-
+DATABASE_URL_RAW = (os.getenv("DATABASE_URL", "") or "").strip()
+# Treat placeholders (e.g., {{...}}) or obviously invalid values as unset
+if ("{{" in DATABASE_URL_RAW) or ("}}" in DATABASE_URL_RAW) or DATABASE_URL_RAW.lower() in ("none", "", "null"):
+    DATABASE_URL_RAW = ""
 def _normalize_db_url(url: str) -> str:
     try:
         if url.startswith("postgres://"):
@@ -61,15 +63,15 @@ async def db_health() -> Tuple[bool, Dict[str, Any]]:
             if dialect.startswith('postgres'):
                 res = await conn.execute(text("SELECT 'ok'::text AS status, current_database(), current_user"))
                 row = res.first()
-                return True, {"status": row[0], "database": row[1], "user": row[2]}
+                return True, {"status": row[0], "database": row[1], "user": row[2], "dialect": "postgres"}
             elif dialect.startswith('sqlite'):
                 res = await conn.execute(text("SELECT 'ok' AS status"))
                 row = res.first()
-                return True, {"status": row[0], "database": "sqlite", "user": None}
+                return True, {"status": row[0], "database": "sqlite", "user": None, "dialect": "sqlite"}
             else:
                 # Fallback generic check
                 await conn.execute(text("SELECT 1"))
-                return True, {"status": "ok", "database": dialect, "user": None}
+                return True, {"status": "ok", "database": dialect, "user": None, "dialect": dialect}
     except Exception as e:
         return False, {"error": str(e)}
 
