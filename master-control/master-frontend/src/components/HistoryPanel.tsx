@@ -15,7 +15,13 @@ export default function HistoryPanel({ open, onClose, agentId: fixedAgentId }: {
   const load = async () => {
     const params = new URLSearchParams()
     if (kind) params.set('kind', kind)
-    if (agentId) params.set('agent_id', agentId)
+    let sel = (agentId || '').trim()
+    if (sel) {
+      // Map alias/name to agent_id if needed (case-insensitive exact)
+      const found = agents.find(a => a.agent_id === sel) || agents.find(a => (a.alias || '').toLowerCase() === sel.toLowerCase() || (a.name || '').toLowerCase() === sel.toLowerCase())
+      if (found) sel = found.agent_id
+      params.set('agent_id', sel)
+    }
     try {
       const r = await fetch(`${apiBase}/admin/history?${params.toString()}`, { headers: { Authorization: `Bearer ${token}` } })
       const j = await r.json()
@@ -41,7 +47,12 @@ export default function HistoryPanel({ open, onClose, agentId: fixedAgentId }: {
   }
 
   const clearKind = async () => {
-    try { await fetch(`${apiBase}/admin/history/clear`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ kind: kind || undefined }) }) } catch {}
+    let sel = (agentId || '').trim()
+    if (sel) {
+      const found = agents.find(a => a.agent_id === sel) || agents.find(a => (a.alias || '').toLowerCase() === sel.toLowerCase() || (a.name || '').toLowerCase() === sel.toLowerCase())
+      if (found) sel = found.agent_id
+    }
+    try { await fetch(`${apiBase}/admin/history/clear`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ kind: kind || undefined, agent_id: sel || undefined }) }) } catch {}
     load()
   }
 
@@ -73,13 +84,21 @@ export default function HistoryPanel({ open, onClose, agentId: fixedAgentId }: {
             <option value="keylog">keylog</option>
           </select>
           {!fixedAgentId ? (
-            <select className="input" style={{ minWidth: 240 }} value={agentId} onChange={(e)=>setAgentId(e.target.value)}>
-              <option value="">(all agents)</option>
-              {agents.map((a)=>{
-                const label = (a as any).alias || a.name || a.agent_id
-                return <option key={a.agent_id} value={a.agent_id}>{label} • {a.agent_id}</option>
-              })}
-            </select>
+            <>
+              <input list="agents-list" className="input" style={{ minWidth: 240 }} value={agentId} onChange={(e)=>setAgentId(e.target.value)} placeholder="agent id, alias, or name" />
+              <datalist id="agents-list">
+                {agents.map((a)=>{
+                  const label = (a as any).alias || a.name || a.agent_id
+                  return (
+                    <>
+                      <option key={`${a.agent_id}-id`} value={a.agent_id}>{label} • {a.agent_id}</option>
+                      {a.alias ? <option key={`${a.agent_id}-alias`} value={a.alias}>{a.alias} • {a.agent_id}</option> : null}
+                      {a.name && a.name !== a.alias ? <option key={`${a.agent_id}-name`} value={a.name}>{a.name} • {a.agent_id}</option> : null}
+                    </>
+                  )
+                })}
+              </datalist>
+            </>
           ) : (
             <input className="input" value={agentId} readOnly />
           )}
