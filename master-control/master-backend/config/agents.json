@@ -1,1 +1,12 @@
-[]
+[
+  {
+    "agent_id": "agent-public",
+    "name": "agent",
+    "alias": null,
+    "http_base": null,
+    "has_camera": false,
+    "country": null,
+    "country_code": null,
+    "online": false
+  }
+]
