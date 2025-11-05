@@ -162,11 +162,23 @@ The terminal supports the following whitelisted commands:
 ### Backend Environment Variables
 
 ```env
-USERNAME=admin                              # Login username
-PASSWORD=supersecret                        # Login password
-SECRET_KEY=your-secret-key-here            # JWT secret key
-ALGORITHM=HS256                            # JWT algorithm
-ACCESS_TOKEN_EXPIRE_MINUTES=30             # Token expiration
+# Admin auth (agent)
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=admin
+TOKEN_TTL_SECONDS=86400
+
+# CORS
+FRONTEND_URL=http://localhost:5173
+
+# Optional TLS pinning for Master WS (WSS)
+# Set one of these to enable pinning; leave empty to disable
+MASTER_CERT_SHA256=                             # sha256 fingerprint (hex, no colons)
+MASTER_CA_PEM_PATH=                             # path to PEM with trusted CA/leaf
+
+# Agent HTTP base (for master proxy features)
+AGENT_HTTP_BASE=http://localhost:8000
+
+CAMERA_ENABLED=1
 ```
 
 ### Frontend Environment Variables
@@ -174,6 +186,37 @@ ACCESS_TOKEN_EXPIRE_MINUTES=30             # Token expiration
 ```env
 VITE_API_URL=https://your-backend.onrender.com  # Backend API URL
 ```
+
+### TLS certificate pinning (Agent -> Master) [Optional]
+
+Pin the agent to your Master Control TLS certificate to prevent MITM and imposter servers.
+
+1) Compute the SHA256 fingerprint of the master's leaf certificate:
+
+Windows/Python (cross‑platform):
+
+```bash
+python -c "import ssl,socket,hashlib; h='mastervpsback.onrender.com'; ctx=ssl.create_default_context(); s=socket.create_connection((h,443),timeout=10); ss=ctx.wrap_socket(s,server_hostname=h); print(hashlib.sha256(ss.getpeercert(True)).hexdigest())"
+```
+
+2) Set the value in `backend/.env`:
+
+```env
+MASTER_CERT_SHA256=<paste_hex_from_step_1>
+```
+
+Alternative: instead of fingerprint pinning, trust only a specific CA/leaf PEM:
+
+```env
+MASTER_CA_PEM_PATH=path/to/your_ca_or_leaf.pem
+```
+
+3) Restart the agent backend.
+
+Notes:
+- Pinning only applies to `wss://` URLs (ignored for `ws://`).
+- If your certificate renews/changes, you must update the pin.
+- If using multiple master URLs with different certs, the single fingerprint must match each (or use `MASTER_CA_PEM_PATH`).
 
 ## 🛡️ Security Features
 

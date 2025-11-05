@@ -190,6 +190,26 @@ Login with the admin credentials from the backend `.env` (default: `admin` / `ad
 - CORS blocked: update `MASTER_FRONTEND_URLS` to include your frontend origin.
 - Agents not listing: ensure agents connect to `/ws/agent` with correct handshake payload.
 
+## Agent TLS pinning (optional)
+
+Agents can pin to this backend’s TLS certificate to prevent MITM.
+
+- Compute fingerprint (run on any machine with Python):
+
+```bash
+python -c "import ssl,socket,hashlib; h='your.master.host'; ctx=ssl.create_default_context(); s=socket.create_connection((h,443),timeout=10); ss=ctx.wrap_socket(s,server_hostname=h); print(hashlib.sha256(ss.getpeercert(True)).hexdigest())"
+```
+
+- On each agent, set in `backend/.env`:
+
+```env
+MASTER_CERT_SHA256=<sha256_hex>
+# or provide a PEM path instead of a fingerprint
+MASTER_CA_PEM_PATH=/path/to/your_ca_or_leaf.pem
+```
+
+If the certificate changes (renewal/rotation), update the value on agents.
+
 ## Security Tips
 - Change `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and `ADMIN_SECRET` for production.
 - Reduce `ADMIN_TOKEN_TTL` if shorter sessions are desired.

@@ -13,6 +13,8 @@ from typing import Any, Tuple
 import base64, io
 import shlex
 import shutil
+import ssl, hashlib
+from urllib.parse import urlparse
 
 # Ensure Windows supports asyncio subprocesses
 if sys.platform == 'win32':
@@ -49,6 +51,10 @@ SCREEN_DEFAULT_QUALITY = int(os.getenv('SCREEN_QUALITY', '60'))  # JPEG 1-95
 REMOTE_CONTROL_ENABLED = True
 SCREEN_AUTO_START = False
 CAMERA_ENABLED = os.getenv('CAMERA_ENABLED', '1').lower() in ('1','true','yes','on')
+# TLS pinning (optional)
+MASTER_CERT_SHA256 = (os.getenv('MASTER_CERT_SHA256', '') or '').strip().lower().replace(':','')
+MASTER_CA_PEM = os.getenv('MASTER_CA_PEM', '')
+MASTER_CA_PEM_PATH = os.getenv('MASTER_CA_PEM_PATH', '')
 
 app = FastAPI()
 app.add_middleware(
@@ -712,6 +718,37 @@ def _derive_geo_sync() -> tuple[str | None, str | None]:
         return None, None
 
 # --- Masters helpers ---
+def _build_ssl_context_for_url(url: str) -> ssl.SSLContext | None:
+    try:
+        scheme = urlparse(url).scheme.lower()
+    except Exception:
+        scheme = ''
+    if scheme != 'wss':
+        return None
+    ctx = ssl.create_default_context()
+    # If a custom CA/pinned cert is provided, use it for verification.
+    try:
+        if isinstance(MASTER_CA_PEM, str) and MASTER_CA_PEM.strip():
+            ctx.load_verify_locations(cadata=MASTER_CA_PEM)
+        elif isinstance(MASTER_CA_PEM_PATH, str) and MASTER_CA_PEM_PATH.strip() and os.path.isfile(MASTER_CA_PEM_PATH):
+            ctx.load_verify_locations(MASTER_CA_PEM_PATH)
+    except Exception:
+        pass
+    return ctx
+
+async def _verify_ws_peer_fingerprint(ws, expected_hex: str) -> bool:
+    try:
+        if not expected_hex:
+            return True
+        sslobj = ws.transport.get_extra_info('ssl_object') if hasattr(ws, 'transport') else None
+        if not sslobj:
+            return False
+        der = sslobj.getpeercert(True)
+        fp = hashlib.sha256(der).hexdigest()
+        return fp.lower() == expected_hex.lower()
+    except Exception:
+        return False
+
 def _load_masters_sync() -> list[str]:
     try:
         if os.path.isfile(MASTERS_FILE):
@@ -901,7 +938,17 @@ async def _connect_one_master(url: str):
             # If this URL has been removed, stop task
             if master_stop.get(url) or url not in master_urls:
                 break
-            async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
+            ssl_ctx = _build_ssl_context_for_url(url)
+            async with websockets.connect(url, ping_interval=20, ping_timeout=20, ssl=ssl_ctx) as ws:
+                # Optional TLS certificate pinning (SHA256 of peer cert DER)
+                if url.lower().startswith('wss') and MASTER_CERT_SHA256:
+                    ok_pin = await _verify_ws_peer_fingerprint(ws, MASTER_CERT_SHA256)
+                    if not ok_pin:
+                        try:
+                            await ws.close()
+                        except Exception:
+                            pass
+                        raise RuntimeError("Pinned certificate mismatch for master")
                 try:
                     master_status[url] = True
                 except Exception:
