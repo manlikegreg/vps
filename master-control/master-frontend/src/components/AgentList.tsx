@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { dashboardSocket } from '../utils/socket'
 
-type Agent = { agent_id: string; name: string; has_camera?: boolean }
+type Agent = { agent_id: string; name: string; has_camera?: boolean; online?: boolean }
 
 type Props = {
   onOpenTerminal: (agent: Agent) => void
@@ -38,6 +38,14 @@ export default function AgentList({ onOpenTerminal }: Props) {
     } catch {}
   }
 
+  const clearAgent = async (agentId: string) => {
+    const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
+    const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || (typeof window !== 'undefined' ? window.location.origin : '')
+    try {
+      await fetch(`${apiBase}/admin/agents/${encodeURIComponent(agentId)}/clear`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+    } catch {}
+  }
+
 
   return (
     <div className="card">
@@ -48,7 +56,7 @@ export default function AgentList({ onOpenTerminal }: Props) {
           return (
             <div key={a.agent_id} className="agent-item">
               <div>
-                <span className="status-dot" />
+                <span className={`status-dot ${(a as any).online === false ? 'red' : ''}`} />
                 <span className="agent-name">{a.name} {a.country_code ? (<span style={{ color: '#9efc9e', fontSize: 12 }}>({a.country_code})</span>) : null}</span>
                 <div className="agent-id">{a.agent_id}</div>
               </div>
@@ -59,6 +67,9 @@ export default function AgentList({ onOpenTerminal }: Props) {
                   <button className="btn secondary" onClick={() => { if (confirm('Blacklist this agent? It will be refused until whitelisted.')) toggleBlacklist(a.agent_id, true) }}>Blacklist</button>
                 ) : (
                   <button className="btn secondary" onClick={() => { if (confirm('Whitelist this agent?')) toggleBlacklist(a.agent_id, false) }}>Whitelist</button>
+                )}
+                {(a as any).online === false && (
+                  <button className="btn secondary" onClick={() => { if (confirm('Clear this offline agent from the dashboard?')) clearAgent(a.agent_id) }}>Clear</button>
                 )}
               </div>
             </div>

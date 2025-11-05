@@ -104,6 +104,15 @@ async def disconnect_agent(agent_id: str, _: bool = Depends(auth_required)):
     except Exception as e:
         return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
 
+# Clear an agent from the registry (remove from dashboard list)
+@app.post('/admin/agents/{agent_id}/clear')
+async def clear_agent(agent_id: str, _: bool = Depends(auth_required)):
+    try:
+        await manager.clear_agent(agent_id)
+        return JSONResponse(content={"ok": True})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
+
 
 # Protect existing REST endpoints
 @app.get('/agent/{agent_id}/stats')

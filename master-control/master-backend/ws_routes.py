@@ -84,7 +84,7 @@ async def ws_agent(ws: WebSocket):
         pass
     finally:
         if agent_id:
-            await manager.remove_agent(agent_id)
+            await manager.mark_offline(agent_id)
 
 @router.websocket('/ws/dashboard')
 async def ws_dashboard(ws: WebSocket):
