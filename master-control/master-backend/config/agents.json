@@ -1,12 +1,12 @@
 [
   {
-    "agent_id": "agent-public",
-    "name": "agent",
+    "agent_id": "agent-example",
+    "name": "example-host",
     "alias": null,
-    "http_base": null,
+    "http_base": "http://localhost:8000",
     "has_camera": false,
-    "country": null,
-    "country_code": null,
+    "country": "N/A",
+    "country_code": "NA",
     "online": false
   }
 ]
