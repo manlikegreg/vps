@@ -1,10 +1,1 @@
-[
-  {
-    "agent_id": "agent-desktop-0j250k4-desktop-0j250k4-hp",
-    "name": "desktop-0j250k4\\hp",
-    "http_base": "http://localhost:8000",
-    "has_camera": true,
-    "country": "Ghana",
-    "country_code": "GH"
-  }
-]
+[]
