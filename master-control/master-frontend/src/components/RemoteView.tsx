@@ -16,6 +16,7 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [showRecs, setShowRecs] = useState(false)
   const [control, setControl] = useState(false)
+  const [cursorXY, setCursorXY] = useState<{x:number,y:number}|null>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
 
@@ -31,18 +32,16 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
 
   useEffect(() => {
     // Draw to canvas for recording when a new frame arrives
-    const img = imgRef.current
     const cvs = canvasRef.current
-    if (!img || !cvs || !frame) return
-    const doDraw = () => {
-      if (!nativeW || !nativeH) return
-      if (cvs.width !== nativeW || cvs.height !== nativeH) {
-        cvs.width = nativeW; cvs.height = nativeH
-      }
+    if (!cvs || !frame || !recording) return
+    if (!nativeW || !nativeH) return
+    if (cvs.width !== nativeW || cvs.height !== nativeH) { cvs.width = nativeW; cvs.height = nativeH }
+    const img = new Image()
+    img.onload = () => {
       const ctx = cvs.getContext('2d')!
       ctx.drawImage(img, 0, 0, nativeW, nativeH)
     }
-    img.onload = () => { if (recording) doDraw() }
+    img.src = frame
   }, [frame, recording, nativeW, nativeH])
 
   const startScreen = () => { dashboardSocket.startScreen(agentId, { fps: fps === 'default' ? undefined : fps, quality: q, height: res }); setRunning(true) }
@@ -125,11 +124,13 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
   }
 
   const onMouseMove = (e: React.MouseEvent<HTMLImageElement>) => {
-    if (!control || !imgRef.current || !nativeW || !nativeH) return
-    if ((e.buttons & 1) === 0 && (e.buttons & 2) === 0) return // only send while a button is held
+    if (!imgRef.current || !nativeW || !nativeH) return
     const rect = imgRef.current.getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
+    setCursorXY({ x, y })
+    if (!control) return
+    if ((e.buttons & 1) === 0 && (e.buttons & 2) === 0) return // only send while a button is held
     const realX = Math.round((x / rect.width) * nativeW)
     const realY = Math.round((y / rect.height) * nativeH)
     dashboardSocket.sendMouse(agentId, { action: 'move', x: realX, y: realY })
@@ -230,11 +231,14 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
           {onClose && <button className="btn secondary" onClick={onClose}>Close</button>}
         </div>
       </div>
-      <div style={{ border: '1px solid #222', borderRadius: 6, background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: expanded ? 520 : 280, height: expanded ? 520 : 280 }}>
+      <div style={{ position: 'relative', border: '1px solid #222', borderRadius: 6, background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: expanded ? 520 : 280, height: expanded ? 520 : 280 }}>
         {frame ? (
-          <img ref={imgRef} src={frame} style={{ maxWidth: '100%', width: '100%', height: '100%', objectFit: 'contain' }} onClick={handleClick} onMouseDown={onMouseDown} onMouseUp={onMouseUp} onMouseMove={onMouseMove} onWheel={onWheel} onContextMenu={(e) => { if (control) e.preventDefault() }} />
+          <img ref={imgRef} src={frame} style={{ maxWidth: '100%', width: '100%', height: '100%', objectFit: 'contain', cursor: control ? 'none' : 'default' }} onClick={handleClick} onMouseDown={onMouseDown} onMouseUp={onMouseUp} onMouseMove={onMouseMove} onWheel={onWheel} onContextMenu={(e) => { if (control) e.preventDefault() }} />
         ) : (
           <div style={{ color: '#777', padding: 20 }}>{running ? 'Waiting for frames...' : 'Not running'}</div>
+        )}
+        {cursorXY && (
+          <div style={{ position: 'absolute', left: cursorXY.x - 6, top: cursorXY.y - 6, width: 12, height: 12, borderRadius: 6, background: control ? '#ffeb3b' : '#9e9e9e', opacity: 0.9, pointerEvents: 'none' }} />
         )}
         {/* hidden canvas used for recording */}
         <canvas ref={canvasRef} style={{ display: 'none' }} />

@@ -58,7 +58,7 @@ export default function AgentTerminal({ agent, onClose }: Props) {
       try {
         if (line && line[0] === '{') {
           const obj = JSON.parse(line)
-if (obj && obj.type === 'masters_list' && Array.isArray(obj.urls)) {
+          if (obj && obj.type === 'masters_list' && Array.isArray(obj.urls)) {
             const st = (obj as any).status || {}
             const cur = (obj as any).current || null
             setMasters((obj.urls as string[]).map((u) => ({ url: u, online: !!st[u], current: cur === u })))
@@ -67,6 +67,12 @@ if (obj && obj.type === 'masters_list' && Array.isArray(obj.urls)) {
         }
       } catch {}
       if (isKeylogLike(line)) return
+      // Drop immediate duplicate echoes or repeats within short window
+      const now = Date.now()
+      if (!('__dedup' in (window as any))) { (window as any).__dedup = { last:"", lastAt:0 } }
+      const dd = (window as any).__dedup as { last:string, lastAt:number }
+      if (dd.last === line && (now - dd.lastAt) < 800) { return }
+      dd.last = line; dd.lastAt = now
       setLinesArr((prev) => {
         const idx = Math.min(lastPaneRef.current, prev.length - 1)
         const arr = prev.map((p) => [...p])
