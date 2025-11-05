@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from 'react'
 export default function TerminalPane({
   interactive,
   lines,
-  onLocalEcho,
   onSend,
   stopInteractive,
   height = 280,
@@ -11,7 +10,6 @@ export default function TerminalPane({
 }: {
   interactive: boolean
   lines: string[]
-  onLocalEcho: (s: string) => void
   onSend: (cmd: string) => void
   stopInteractive: () => void
   height?: number
@@ -21,6 +19,7 @@ export default function TerminalPane({
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const historyRef = useRef<string[]>([])
   const historyIndexRef = useRef<number>(0)
+  const lastSendRef = useRef<{cmd:string, at:number}>({ cmd: '', at: 0 })
 
   useEffect(() => {
     const el = scrollRef.current
@@ -30,16 +29,15 @@ export default function TerminalPane({
   const send = () => {
     const cmd = input
     if (!cmd.trim()) return
-    onLocalEcho(`> ${cmd}`)
+    const now = Date.now()
+    const last = lastSendRef.current
+    if (last.cmd === cmd && (now - last.at) < 400) { return }
+    lastSendRef.current = { cmd, at: now }
     historyRef.current.push(cmd)
     historyIndexRef.current = historyRef.current.length
-    onLocalEcho(`> ${cmd}`)
     onSend(cmd)
     setInput('')
   }
-
-  return (
-    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 8, height }}>
       <div className="terminal" ref={scrollRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', fontSize }}>
         {lines.map((l, i) => (
           <p key={i} className="line" style={{ margin: '2px 0' }}>{l}</p>
