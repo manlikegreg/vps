@@ -60,7 +60,7 @@ if (obj && obj.type === 'masters_list' && Array.isArray(obj.urls)) {
           </div>
         )}
         {activeAgent && (
-          <AgentTerminal agent={activeAgent} onClose={() => setActiveAgent(null)} />
+          <AgentTerminal agent={activeAgent} onClose={() => setActiveAgent(null)} onOpenHistory={() => setHistoryOpen(true)} />
         )}
       </main>
       <MastersPanel

@@ -156,6 +156,17 @@ async def clear_agent(agent_id: str, _: bool = Depends(auth_required)):
     except Exception as e:
         return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
 
+class AliasBody(BaseModel):
+    alias: str | None = None
+
+@app.post('/admin/agents/{agent_id}/alias')
+async def set_agent_alias(agent_id: str, body: AliasBody, _: bool = Depends(auth_required)):
+    try:
+        await manager.set_alias(agent_id, (body.alias or None))
+        return JSONResponse(content={"ok": True})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
+
 
 # Protect existing REST endpoints
 @app.get('/agent/{agent_id}/stats')

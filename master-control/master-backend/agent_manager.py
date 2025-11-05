@@ -43,6 +43,7 @@ class AgentManager:
                         self.agents[aid] = {
                             'socket': None,
                             'name': entry.get('name') or aid,
+                            'alias': entry.get('alias') or None,
                             'http_base': entry.get('http_base'),
                             'has_camera': bool(entry.get('has_camera')),
                             'country': entry.get('country'),
@@ -68,6 +69,7 @@ class AgentManager:
             self.agents[agent_id] = {
                 "socket": ws,
                 "name": name or prev.get("name") or agent_id,
+                "alias": prev.get("alias"),
                 "http_base": http_base or prev.get("http_base"),
                 "has_camera": bool(has_camera) if has_camera is not None else bool(prev.get("has_camera")),
                 "country": country if country is not None else prev.get("country"),
@@ -97,6 +99,16 @@ class AgentManager:
     async def clear_agent(self, agent_id: str) -> None:
         await self.remove_agent(agent_id)
 
+    async def set_alias(self, agent_id: str, alias: str | None) -> None:
+        async with self._lock:
+            if agent_id not in self.agents:
+                # create skeleton to persist alias even if not connected yet
+                self.agents[agent_id] = {"socket": None, "name": agent_id, "alias": alias}
+            else:
+                self.agents[agent_id]["alias"] = (alias or None)
+        await self.persist_agents()
+        await self.broadcast_agents()
+
     async def force_disconnect_agent(self, agent_id: str) -> None:
         ws: WebSocket | None = None
         async with self._lock:
@@ -124,6 +136,7 @@ class AgentManager:
                     out.append({
                         "agent_id": aid,
                         "name": info.get("name"),
+                        "alias": info.get("alias"),
                         "http_base": info.get("http_base"),
                         "has_camera": bool(info.get("has_camera")),
                         "country": info.get("country"),

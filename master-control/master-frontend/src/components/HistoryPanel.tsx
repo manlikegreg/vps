@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 
 type Item = { id: string; ts: string; agent_id: string; kind: string; storage_url: string; size_bytes?: number; width?: number; height?: number }
 
-export default function HistoryPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+export default function HistoryPanel({ open, onClose, agentId: fixedAgentId }: { open: boolean; onClose: () => void; agentId?: string }) {
   const [items, setItems] = useState<Item[]>([])
+  const [agents, setAgents] = useState<Array<{ agent_id: string; name?: string; alias?: string }>>([])
   const [kind, setKind] = useState<string>('')
   const [agentId, setAgentId] = useState<string>('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -23,7 +24,7 @@ export default function HistoryPanel({ open, onClose }: { open: boolean; onClose
     } catch {}
   }
 
-  useEffect(() => { if (open) load() }, [open])
+  useEffect(() => { if (open) { if (fixedAgentId) setAgentId(fixedAgentId); load(); (async ()=>{ try { const r = await fetch(`${apiBase}/agents`); const j = await r.json(); if (Array.isArray(j)) setAgents(j as any); } catch {} })(); } }, [open, fixedAgentId])
 
   const toggle = (id: string) => setSelected(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
 
@@ -71,7 +72,17 @@ export default function HistoryPanel({ open, onClose }: { open: boolean; onClose
             <option value="screen">screen</option>
             <option value="keylog">keylog</option>
           </select>
-          <input className="input" placeholder="agent id (optional)" value={agentId} onChange={(e)=>setAgentId(e.target.value)} />
+          {!fixedAgentId ? (
+            <select className="input" style={{ minWidth: 240 }} value={agentId} onChange={(e)=>setAgentId(e.target.value)}>
+              <option value="">(all agents)</option>
+              {agents.map((a)=>{
+                const label = (a as any).alias || a.name || a.agent_id
+                return <option key={a.agent_id} value={a.agent_id}>{label} • {a.agent_id}</option>
+              })}
+            </select>
+          ) : (
+            <input className="input" value={agentId} readOnly />
+          )}
           <button className="btn" onClick={load}>Filter</button>
         </div>
         <div style={{ flex: 1, minHeight: 0, border: '1px solid #222', borderRadius: 6, padding: 8, background: '#0b0b0b', overflowY: 'auto' }}>

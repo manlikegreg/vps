@@ -19,6 +19,10 @@ dist/
 token.txt
 token.txt.txt
 
+# Master-control runtime files
+master-control/master-backend/media/
+master-control/master-backend/config/autorun.json
+
 # OS
 .DS_Store
 Thumbs.db
