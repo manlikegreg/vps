@@ -38,6 +38,9 @@ export default function TerminalPane({
     onSend(cmd)
     setInput('')
   }
+
+  return (
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 8, height }}>
       <div className="terminal" ref={scrollRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', fontSize }}>
         {lines.map((l, i) => (
           <p key={i} className="line" style={{ margin: '2px 0' }}>{l}</p>
@@ -55,7 +58,6 @@ export default function TerminalPane({
             if (k === 'Enter') { e.preventDefault(); send(); return }
             if (e.ctrlKey && k.toLowerCase() === 'c') {
               e.preventDefault()
-              onLocalEcho('^C')
               stopInteractive()
               setInput('')
               return
