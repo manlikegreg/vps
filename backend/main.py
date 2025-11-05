@@ -2076,7 +2076,7 @@ async def _connect_one_master(url: str):
                                 proc.kill()
                         except Exception:
                             pass
-except Exception as e:
+        except Exception as e:
             try:
                 master_status[url] = False
             except Exception:
