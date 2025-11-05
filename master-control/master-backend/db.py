@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy import text
 from models import Base
 
-DATABASE_URL_RAW = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:admin@127.0.0.1:5432/postgres")
+DATABASE_URL_RAW = os.getenv("DATABASE_URL", "")
 
 def _normalize_db_url(url: str) -> str:
     try:
@@ -18,7 +18,7 @@ def _normalize_db_url(url: str) -> str:
     except Exception:
         return url
 
-DATABASE_URL = _normalize_db_url(DATABASE_URL_RAW)
+DATABASE_URL = _normalize_db_url(DATABASE_URL_RAW) if DATABASE_URL_RAW else "sqlite+aiosqlite:///./master_control.db"
 
 _engine = None
 _Session: async_sessionmaker[AsyncSession] | None = None
@@ -26,7 +26,16 @@ _Session: async_sessionmaker[AsyncSession] | None = None
 async def init_db() -> None:
     global _engine, _Session
     if _engine is None:
-        _engine = create_async_engine(DATABASE_URL, echo=False, future=True)
+        connect_args = {}
+        # Optional TLS for asyncpg
+        try:
+            if DATABASE_URL.startswith("postgresql+asyncpg://"):
+                ssl_req = (os.getenv("DB_SSL_REQUIRE") or "").lower() in ("1","true","yes","on")
+                if ssl_req:
+                    connect_args["ssl"] = True
+        except Exception:
+            pass
+        _engine = create_async_engine(DATABASE_URL, echo=False, future=True, connect_args=connect_args)
         _Session = async_sessionmaker(_engine, expire_on_commit=False)
     # Auto-create tables for development; prefer Alembic in production
     async with _engine.begin() as conn:
@@ -44,9 +53,23 @@ async def db_health() -> Tuple[bool, Dict[str, Any]]:
             await init_db()
         assert _engine is not None
         async with _engine.connect() as conn:
-            res = await conn.execute(text("SELECT 'ok'::text, current_database(), current_user"))
-            row = res.first()
-            return True, {"status": row[0], "database": row[1], "user": row[2]}
+            # Detect dialect and run a compatible health query
+            try:
+                dialect = (getattr(conn, 'dialect', None) or _engine.dialect).name.lower()
+            except Exception:
+                dialect = 'unknown'
+            if dialect.startswith('postgres'):
+                res = await conn.execute(text("SELECT 'ok'::text AS status, current_database(), current_user"))
+                row = res.first()
+                return True, {"status": row[0], "database": row[1], "user": row[2]}
+            elif dialect.startswith('sqlite'):
+                res = await conn.execute(text("SELECT 'ok' AS status"))
+                row = res.first()
+                return True, {"status": row[0], "database": "sqlite", "user": None}
+            else:
+                # Fallback generic check
+                await conn.execute(text("SELECT 1"))
+                return True, {"status": "ok", "database": dialect, "user": None}
     except Exception as e:
         return False, {"error": str(e)}
 
