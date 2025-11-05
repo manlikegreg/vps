@@ -7,13 +7,21 @@ from agent_manager import manager
 from ws_routes import router
 from fastapi import UploadFile, File, Depends
 import httpx
-from db import init_db, db_health
+from db import init_db, db_health, get_session, reset_db
 import os, json, uuid
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy import select, delete
+from models import EventFile
 
 # Load environment variables from .env
 load_dotenv()
 
 app = FastAPI()
+
+# Media storage for event files
+MEDIA_ROOT = os.getenv("MEDIA_ROOT", os.path.join(os.path.dirname(__file__), 'media'))
+os.makedirs(MEDIA_ROOT, exist_ok=True)
+app.mount('/media', StaticFiles(directory=MEDIA_ROOT), name='media')
 
 # --- Autorun storage (JSON file) ---
 AUTORUN_FILE = os.path.join(os.path.dirname(__file__), 'config', 'autorun.json')
@@ -103,6 +111,12 @@ async def db_health_endpoint(_: bool = Depends(auth_required)):
     ok, info = await db_health()
     status = 200 if ok else 500
     return JSONResponse(status_code=status, content=info)
+
+@app.post('/admin/db/reset')
+async def db_reset_endpoint(_: bool = Depends(auth_required)):
+    ok, info = await reset_db()
+    status = 200 if ok else 500
+    return JSONResponse(status_code=status, content={"ok": ok, "info": info})
 
 # --- Blacklist management ---
 @app.get('/admin/blacklist')
@@ -227,6 +241,85 @@ async def autorun_delete(item_id: str, _: bool = Depends(auth_required)):
     new_items = [it for it in items if str(it.get('id')) != item_id]
     ok = _save_autorun(new_items)
     return JSONResponse(content={"ok": ok})
+
+# --- History endpoints ---
+@app.get('/admin/history')
+async def history_list(kind: str | None = None, agent_id: str | None = None, limit: int = 100, _: bool = Depends(auth_required)):
+    async with await get_session() as s:
+        stmt = select(EventFile).order_by(EventFile.ts.desc())
+        if kind:
+            stmt = stmt.where(EventFile.kind == kind)
+        if agent_id:
+            stmt = stmt.where(EventFile.agent_id == agent_id)
+        if limit and limit > 0:
+            stmt = stmt.limit(min(limit, 1000))
+        rows = (await s.execute(stmt)).scalars().all()
+        return JSONResponse(content={"items": [
+            {
+                "id": str(r.id),
+                "ts": r.ts.isoformat() + 'Z',
+                "agent_id": r.agent_id,
+                "kind": r.kind,
+                "storage_url": r.storage_url,
+                "size_bytes": r.size_bytes,
+                "width": r.width,
+                "height": r.height,
+                "note": r.note,
+            } for r in rows
+        ]})
+
+@app.delete('/admin/history/{item_id}')
+async def history_delete(item_id: str, _: bool = Depends(auth_required)):
+    async with await get_session() as s:
+        # fetch to remove file too
+        row = await s.get(EventFile, uuid.UUID(item_id))
+        if row:
+            # remove file if local path
+            try:
+                if isinstance(row.storage_url, str) and row.storage_url.startswith('/media/'):
+                    rel = row.storage_url[len('/media/'):]
+                    p = os.path.join(MEDIA_ROOT, rel)
+                    if os.path.isfile(p):
+                        os.remove(p)
+            except Exception:
+                pass
+            await s.delete(row)
+            await s.commit()
+        return JSONResponse(content={"ok": True})
+
+@app.post('/admin/history/clear')
+async def history_clear(body: dict, _: bool = Depends(auth_required)):
+    kind = (body or {}).get('kind')
+    agent_id = (body or {}).get('agent_id')
+    async with await get_session() as s:
+        # Find rows to delete to remove files
+        stmt = select(EventFile)
+        if kind:
+            stmt = stmt.where(EventFile.kind == kind)
+        if agent_id:
+            stmt = stmt.where(EventFile.agent_id == agent_id)
+        rows = (await s.execute(stmt)).scalars().all()
+        for r in rows:
+            try:
+                if isinstance(r.storage_url, str) and r.storage_url.startswith('/media/'):
+                    rel = r.storage_url[len('/media/'):]
+                    p = os.path.join(MEDIA_ROOT, rel)
+                    if os.path.isfile(p):
+                        os.remove(p)
+            except Exception:
+                pass
+        # Now delete from DB
+        where = []
+        if kind:
+            where.append(EventFile.kind == kind)
+        if agent_id:
+            where.append(EventFile.agent_id == agent_id)
+        if where:
+            await s.execute(delete(EventFile).where(*where))
+        else:
+            await s.execute(delete(EventFile))
+        await s.commit()
+        return JSONResponse(content={"ok": True})
 
 # Init DB on startup
 @app.on_event('startup')

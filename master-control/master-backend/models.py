@@ -35,3 +35,15 @@ class RecordingSegment(Base):
     size_bytes: Mapped[int | None] = mapped_column(BigInteger)
     duration_ms: Mapped[int | None] = mapped_column(Integer)
     started_at: Mapped[dt.datetime] = mapped_column(DateTime, default=lambda: dt.datetime.utcnow(), nullable=False)
+
+class EventFile(Base):
+    __tablename__ = 'event_files'
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ts: Mapped[dt.datetime] = mapped_column(DateTime, default=lambda: dt.datetime.utcnow(), nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(255), index=True)
+    kind: Mapped[str] = mapped_column(String(32), index=True)  # 'camera' | 'screen' | 'keylog'
+    storage_url: Mapped[str] = mapped_column(Text)  # /media/... path
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+    note: Mapped[str | None] = mapped_column(Text)

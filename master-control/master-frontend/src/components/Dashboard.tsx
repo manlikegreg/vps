@@ -4,6 +4,7 @@ import AgentTerminal from './AgentTerminal'
 import CommandPanel from './CommandPanel'
 import MastersPanel from './MastersPanel'
 import AutoRunPanel from './AutoRunPanel'
+import HistoryPanel from './HistoryPanel'
 import { dashboardSocket } from '../utils/socket'
 
 type Agent = { agent_id: string; name: string; has_camera?: boolean }
@@ -12,6 +13,7 @@ export default function Dashboard() {
   const [activeAgent, setActiveAgent] = useState<Agent | null>(null)
   const [mastersOpen, setMastersOpen] = useState(false)
   const [autorunOpen, setAutorunOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [masters, setMasters] = useState<Array<{ url: string; online?: boolean; current?: boolean }>>([])
 
   const openMasters = () => {
@@ -49,6 +51,7 @@ if (obj && obj.type === 'masters_list' && Array.isArray(obj.urls)) {
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
           <button className="btn secondary" onClick={openMasters} disabled={!activeAgent}>Agent URLs</button>
           <button className="btn secondary" onClick={() => setAutorunOpen(true)}>Auto Run</button>
+          <button className="btn secondary" onClick={() => setHistoryOpen(true)}>History</button>
         </div>
         <CommandPanel />
         {!activeAgent && (
@@ -71,6 +74,7 @@ if (obj && obj.type === 'masters_list' && Array.isArray(obj.urls)) {
         onClose={() => setMastersOpen(false)}
       />
       <AutoRunPanel open={autorunOpen} onClose={() => setAutorunOpen(false)} />
+      <HistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />
     </div>
   )
 }

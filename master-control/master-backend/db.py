@@ -36,3 +36,15 @@ async def db_health() -> Tuple[bool, Dict[str, Any]]:
             return True, {"status": row[0], "database": row[1], "user": row[2]}
     except Exception as e:
         return False, {"error": str(e)}
+
+async def reset_db() -> Tuple[bool, str]:
+    try:
+        if _engine is None:
+            await init_db()
+        assert _engine is not None
+        async with _engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
+        return True, "reset"
+    except Exception as e:
+        return False, str(e)
