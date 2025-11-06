@@ -1078,9 +1078,22 @@ async def _connect_one_master(url: str):
                                 except Exception:
                                     pass
                                 continue
-                            rate = max(8000, min(48000, int(AUDIO_SAMPLE_RATE)))
-                            ch = 1 if int(AUDIO_CHANNELS) <= 1 else 2
-                            max_sec = max(1, int(AUDIO_MAX_SECONDS))
+                            # Allow master to override defaults per session
+                            try:
+                                req_rate = int(data.get("sample_rate") or data.get("rate") or 0)
+                            except Exception:
+                                req_rate = 0
+                            try:
+                                req_ch = int(data.get("channels") or 0)
+                            except Exception:
+                                req_ch = 0
+                            try:
+                                req_cap = int(data.get("max_seconds") or 0)
+                            except Exception:
+                                req_cap = 0
+                            rate = max(8000, min(48000, int(req_rate or AUDIO_SAMPLE_RATE)))
+                            ch = 1 if int(req_ch or AUDIO_CHANNELS) <= 1 else 2
+                            max_sec = max(1, int(req_cap or AUDIO_MAX_SECONDS))
                             buf = io.BytesIO()
                             stop_ev = threading.Event()
                             def _cb(indata, frames, t, status):
