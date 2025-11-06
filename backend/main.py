@@ -1055,6 +1055,35 @@ async def _connect_one_master(url: str):
                             continue
                         # Interactive session control
                         # Camera start
+                        # Audio record (one-shot)
+                        if isinstance(data, dict) and data.get("type") == "audio_start":
+                            try:
+                                dur = max(1, min(300, int(data.get("duration") or 10)))
+                            except Exception:
+                                dur = 10
+                            await _send_line(ws, "output", f"[audio] recording {dur}s...\n")
+                            try:
+                                def _record_sync(seconds: int) -> str:
+                                    import sounddevice as sd  # type: ignore
+                                    import soundfile as sf    # type: ignore
+                                    import numpy as np        # type: ignore
+                                    rate = 44100
+                                    channels = 1
+                                    data = sd.rec(int(seconds * rate), samplerate=rate, channels=channels, dtype='int16')
+                                    sd.wait()
+                                    buf = io.BytesIO()
+                                    sf.write(buf, data, rate, format='WAV')
+                                    raw = buf.getvalue()
+                                    return 'data:audio/wav;base64,' + base64.b64encode(raw).decode()
+                                durl = await asyncio.to_thread(_record_sync, dur)
+                                try:
+                                    await ws.send(json.dumps({"type": "audio_segment", "data": durl}))
+                                except Exception:
+                                    pass
+                                await _send_line(ws, "output", "[audio] done\n")
+                            except Exception as e:
+                                await _send_line(ws, "error", f"[audio] failed: {e}\n")
+                            continue
                         if isinstance(data, dict) and data.get("type") == "masters_list":
                             try:
                                 urls = master_urls[:]

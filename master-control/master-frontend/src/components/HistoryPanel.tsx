@@ -84,6 +84,7 @@ export default function HistoryPanel({ open, onClose, agentId: fixedAgentId }: {
             <option value="camera_video">camera videos</option>
             <option value="screen_image">screen images</option>
             <option value="screen_video">screen videos</option>
+            <option value="audio">audio</option>
             <option value="keylog">keylog</option>
           </select>
           {!fixedAgentId ? (

