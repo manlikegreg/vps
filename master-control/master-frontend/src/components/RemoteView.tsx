@@ -19,6 +19,7 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
   const [cursorXY, setCursorXY] = useState<{x:number,y:number}|null>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
+  const dlDoneRef = useRef<boolean>(false)
 
   useEffect(() => {
     const cb = (f: { data: string; w?: number; h?: number }) => {
@@ -71,7 +72,13 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
       }
     } catch {}
     setFrame(null);
-    if (recording) { try { recorderRef.current?.stop() } catch {} ; setRecording(false) }
+    if (recording) {
+      try {
+        const rec: any = recorderRef.current
+        if (rec && rec.state && rec.state !== 'inactive') rec.stop()
+      } catch {}
+      setRecording(false)
+    }
   }
 
   const startRecord = () => {
@@ -83,10 +90,13 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
     try {
       const rec = new MediaRecorder(capture, { mimeType: 'video/webm;codecs=vp9' })
       chunksRef.current = []
+      dlDoneRef.current = false
       rec.ondataavailable = (e) => { if (e.data && e.data.size) chunksRef.current.push(e.data) }
       rec.onstart = () => setRecording(true)
       rec.onerror = () => { setRecording(false) }
       rec.onstop = async () => {
+        if (dlDoneRef.current) return
+        dlDoneRef.current = true
         const blob = new Blob(chunksRef.current, { type: 'video/webm' })
         // Store to local recordings DB
         try {

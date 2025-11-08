@@ -8,12 +8,20 @@ export default function AudioPanel({ agentId, agentName }: { agentId: string; ag
   const [talking, setTalking] = useState(false)
   const [muted, setMuted] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [listening, setListening] = useState(false)
   const uploadRef = useRef<HTMLInputElement | null>(null)
 
   // Live talk resources
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const audioCtxRef = useRef<AudioContext | null>(null)
   const procRef = useRef<ScriptProcessorNode | null>(null)
+
+  // Listening playback resources
+  const listenCtxRef = useRef<AudioContext | null>(null)
+  const scheduleAtRef = useRef<number>(0)
+  const oscCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const lastSamplesRef = useRef<Float32Array | null>(null)
+  const rafRef = useRef<number | null>(null)
 
   const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || (typeof window !== 'undefined' ? window.location.origin : '')
   const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
@@ -133,6 +141,89 @@ export default function AudioPanel({ agentId, agentName }: { agentId: string; ag
     try { dashboardSocket.intercomMute(agentId, m) } catch {}
   }
 
+  // --- Start/Stop Listening to agent audio ---
+  const handleAudioLiveChunk = (chunk: { pcm_b64: string; rate?: number; ch?: number }) => {
+    try {
+      const ctx = listenCtxRef.current || new (window.AudioContext || (window as any).webkitAudioContext)({})
+      if (!listenCtxRef.current) listenCtxRef.current = ctx
+      const r = Math.floor(chunk.rate || rate)
+      const c = Math.min(2, Math.max(1, chunk.ch || ch))
+      const raw = atob(chunk.pcm_b64)
+      const bytes = new Uint8Array(raw.length)
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i)
+      const pcm = new Int16Array(bytes.buffer)
+      const frames = Math.floor(pcm.length / c)
+      const audioBuf = ctx.createBuffer(c, frames, r)
+      // de-interleave
+      const f32 = new Float32Array(frames * c)
+      for (let i = 0; i < frames; i++) {
+        for (let chx = 0; chx < c; chx++) {
+          const s16 = pcm[i * c + chx]
+          f32[i * c + chx] = (s16 < 0 ? s16 / 32768 : s16 / 32767)
+        }
+      }
+      for (let chx = 0; chx < c; chx++) {
+        const channelData = audioBuf.getChannelData(chx)
+        for (let i = 0; i < frames; i++) channelData[i] = f32[i * c + chx]
+      }
+      // schedule playback
+      let t = scheduleAtRef.current
+      const now = ctx.currentTime
+      if (!t || t < now) t = now + 0.02
+      const src = ctx.createBufferSource()
+      src.buffer = audioBuf
+      src.connect(ctx.destination)
+      src.start(t)
+      scheduleAtRef.current = t + audioBuf.duration
+      // update chart samples (mono mix)
+      const mono = new Float32Array(frames)
+      for (let i = 0; i < frames; i++) mono[i] = c === 2 ? 0.5 * (f32[i * c] + f32[i * c + 1]) : f32[i * c]
+      lastSamplesRef.current = mono
+    } catch {}
+  }
+
+  const startListening = () => {
+    if (listening) return
+    dashboardSocket.onAudioLive(agentId, handleAudioLiveChunk)
+    dashboardSocket.audioListenStart(agentId, { sample_rate: rate, channels: ch })
+    setListening(true)
+  }
+  const stopListening = () => {
+    dashboardSocket.audioListenStop(agentId)
+    dashboardSocket.offAudioLive(agentId, handleAudioLiveChunk)
+    setListening(false)
+    try { if (listenCtxRef.current) listenCtxRef.current.close() } catch {}
+    listenCtxRef.current = null
+    scheduleAtRef.current = 0
+  }
+
+  // Oscilloscope
+  useEffect(() => {
+    const draw = () => {
+      const cvs = oscCanvasRef.current
+      const samples = lastSamplesRef.current
+      if (!cvs) { rafRef.current = requestAnimationFrame(draw); return }
+      const ctx = cvs.getContext('2d')!
+      ctx.fillStyle = '#000'; ctx.fillRect(0,0,cvs.width,cvs.height)
+      if (samples && samples.length) {
+        ctx.strokeStyle = '#9efc9e'; ctx.lineWidth = 1.5; ctx.beginPath()
+        const step = Math.max(1, Math.floor(samples.length / cvs.width))
+        for (let x = 0; x < cvs.width; x++) {
+          const idx = x * step
+          const val = samples[Math.min(samples.length-1, idx)] || 0
+          const y = Math.round((1 - (val + 1) / 2) * (cvs.height - 1))
+          if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+        }
+        ctx.stroke()
+      } else {
+        ctx.fillStyle = '#222'; ctx.fillRect(0,0,cvs.width,cvs.height)
+      }
+      rafRef.current = requestAnimationFrame(draw)
+    }
+    rafRef.current = requestAnimationFrame(draw)
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
+  }, [])
+
   return (
     <div className="card" style={{ marginTop: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -146,15 +237,24 @@ export default function AudioPanel({ agentId, agentName }: { agentId: string; ag
             <option value={2}>Stereo</option>
           </select>
           <button className="btn" onClick={toggleRecord}>{recording ? 'Stop Recording' : 'Record Agent'}</button>
+          {!listening ? (
+            <button className="btn" onClick={startListening}>Start Listening</button>
+          ) : (
+            <button className="btn secondary" onClick={stopListening}>Stop Listening</button>
+          )}
           <button className={`btn ${talking ? 'secondary' : ''}`} onClick={toggleTalk}>{talking ? 'Stop Live Talk' : 'Start Live Talk'}</button>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: '#ddd' }}>
             <input type="checkbox" checked={muted} onChange={(e)=>toggleMute(e.target.checked)} disabled={!talking} /> Mute mic
           </label>
           <button className="btn secondary" onClick={() => uploadRef.current?.click()} disabled={uploading}>{uploading ? 'Uploading...' : 'Play File on Agent'}</button>
           <input ref={uploadRef} type="file" accept="audio/*,.wav" style={{ display: 'none' }} onChange={onUpload} />
+          <button className="btn secondary" onClick={() => { const url = `${window.location.origin}/audio.html?agentId=${encodeURIComponent(agentId)}&agentName=${encodeURIComponent(agentName)}`; window.open(url, '_blank') }}>Open in New Tab</button>
         </div>
       </div>
-      <div style={{ color: '#777', fontSize: 12 }}>
+      <div style={{ border: '1px solid #222', borderRadius: 6, background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 160, height: 160 }}>
+        <canvas ref={oscCanvasRef} width={800} height={140} style={{ width: '100%', height: '100%' }} />
+      </div>
+      <div style={{ color: '#777', fontSize: 12, marginTop: 8 }}>
         Tip: Upload WAV for best compatibility. Live talk streams raw PCM; quality depends on device and network.
       </div>
     </div>

