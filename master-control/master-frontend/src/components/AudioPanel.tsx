@@ -193,7 +193,6 @@ export default function AudioPanel({ agentId, agentName }: { agentId: string; ag
     dashboardSocket.onAudioLive(agentId, handleAudioLiveChunk)
     dashboardSocket.audioListenStart(agentId, { sample_rate: rate, channels: ch })
     setListening(true)
-    try { localStorage.setItem(`mc:audioListening:${agentId}`, '1') } catch {}
   }
   const stopListening = () => {
     dashboardSocket.audioListenStop(agentId)
@@ -232,19 +231,6 @@ export default function AudioPanel({ agentId, agentName }: { agentId: string; ag
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
   }, [])
 
-  // Attempt to restore state after refresh (best-effort; may be blocked by autoplay policies)
-  useEffect(() => {
-    try {
-      if (localStorage.getItem(`mc:audioListening:${agentId}`) === '1' && !listening) startListening()
-    } catch {}
-    try {
-      if (localStorage.getItem(`mc:audioRecording:${agentId}`) === '1') setRecording(true)
-    } catch {}
-    try {
-      if (localStorage.getItem(`mc:intercom:${agentId}`) === '1') setTalking(true)
-    } catch {}
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentId])
 
   return (
     <div className="card" style={{ marginTop: 10 }}>

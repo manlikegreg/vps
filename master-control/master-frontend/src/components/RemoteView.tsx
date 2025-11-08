@@ -27,21 +27,9 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
       setNativeW(f.w)
       setNativeH(f.h)
       setRunning(true)
-      try { localStorage.setItem(`mc:screenRunning:${agentId}`, '1') } catch {}
     }
     dashboardSocket.onScreen(agentId, cb)
     return () => dashboardSocket.offScreen(agentId, cb)
-  }, [agentId])
-
-  // Resume screen streaming after refresh if previously running
-  useEffect(() => {
-    try {
-      const key = `mc:screenRunning:${agentId}`
-      if (localStorage.getItem(key) === '1') {
-        startScreen()
-      }
-    } catch {}
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId])
 
   useEffect(() => {
@@ -58,7 +46,7 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
     img.src = frame
   }, [frame, recording, nativeW, nativeH])
 
-  const startScreen = () => { dashboardSocket.startScreen(agentId, { fps: fps === 'default' ? undefined : fps, quality: q, height: res }); setRunning(true); try { localStorage.setItem(`mc:screenRunning:${agentId}`, '1') } catch {} }
+  const startScreen = () => { dashboardSocket.startScreen(agentId, { fps: fps === 'default' ? undefined : fps, quality: q, height: res }); setRunning(true) }
   const stopScreen = async () => {
     dashboardSocket.stopScreen(agentId);
     setRunning(false);
@@ -70,14 +58,6 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
       } catch {}
       setRecording(false)
     }
-  }
-      try {
-        const rec: any = recorderRef.current
-        if (rec && rec.state && rec.state !== 'inactive') rec.stop()
-      } catch {}
-      setRecording(false)
-    }
-  }
 
   const startRecord = () => {
     if (recording) return
