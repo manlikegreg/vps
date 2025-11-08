@@ -2469,6 +2469,40 @@ async def _connect_one_master(url: str):
                             except Exception as e:
                                 await _send_line(ws, "error", f"[fs] failed: {e}\n")
                             continue
+                        # --- Direct file upload via WS (data URL or base64) ---
+                        if isinstance(data, dict) and data.get("type") == "upload_data":
+                            try:
+                                name = str(data.get("name") or "upload.bin").strip()
+                                # prevent path traversal; keep basename only
+                                try:
+                                    name = os.path.basename(name)
+                                except Exception:
+                                    pass
+                                s = str(data.get("data") or data.get("data_url") or data.get("b64") or "")
+                                if not s:
+                                    await _send_line(ws, "error", "[upload] missing data\n")
+                                    continue
+                                if s.startswith('data:') and ';base64,' in s:
+                                    try:
+                                        s = s.split(';base64,', 1)[1]
+                                    except Exception:
+                                        pass
+                                try:
+                                    raw = base64.b64decode(s, validate=False)
+                                except Exception as e:
+                                    await _send_line(ws, "error", f"[upload] decode failed: {e}\n")
+                                    continue
+                                out_path = os.path.join(current_agent_dir, name)
+                                try:
+                                    with open(out_path, 'wb') as f:
+                                        f.write(raw)
+                                except Exception as e:
+                                    await _send_line(ws, "error", f"[upload] write failed: {e}\n")
+                                    continue
+                                await _send_line(ws, "output", f"[upload] saved {out_path}\n")
+                            except Exception as e:
+                                await _send_line(ws, "error", f"[upload] failed: {e}\n")
+                            continue
                         cmd = data.get("command")
                         if cmd:
                             # If interactive is running, do not queue normal commands

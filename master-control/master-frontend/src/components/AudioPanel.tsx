@@ -66,18 +66,17 @@ export default function AudioPanel({ agentId, agentName }: { agentId: string; ag
     if (!file) return
     setUploading(true)
     try {
-      const fd = new FormData()
-      fd.append('file', file)
-      const res = await fetch(`${apiBase}/agent/${agentId}/upload`, { method: 'POST', body: fd, headers: { Authorization: `Bearer ${token}` } })
-      const j = await res.json()
-      const saved: string | undefined = j?.saved
-      if (saved) {
-        dashboardSocket.audioPlayPath(agentId, saved)
-      } else {
-        alert('Upload failed')
-      }
+      // Send audio data directly over WS (no agent HTTP required)
+      const dataUrl: string = await new Promise((resolve, reject) => {
+        const fr = new FileReader()
+        fr.onload = () => resolve(String(fr.result || ''))
+        fr.onerror = () => reject(fr.error)
+        fr.readAsDataURL(file)
+      })
+      // Prefer audioPlayData so agent decodes and plays from memory
+      dashboardSocket.audioPlayData(agentId, dataUrl)
     } catch {
-      // no-op
+      alert('Upload failed')
     }
     setUploading(false)
     if (uploadRef.current) uploadRef.current.value = ''

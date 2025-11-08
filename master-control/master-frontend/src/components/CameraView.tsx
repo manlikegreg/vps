@@ -56,6 +56,8 @@ export default function CameraView({ agentId, agentName, enabled, onStarted, onS
 
   // On unmount, just send stop to agent without any downloads
   useEffect(() => {
+    // Proactively stop any camera stream when opening the tab to ensure explicit Start is required
+    try { dashboardSocket.stopCamera(agentId) } catch {}
     return () => { try { dashboardSocket.stopCamera(agentId); } catch {} };
   }, []);
 

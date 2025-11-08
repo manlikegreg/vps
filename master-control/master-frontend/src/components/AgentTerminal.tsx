@@ -112,11 +112,16 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
     if (!file) return
     setUploading(true)
     try {
-      const fd = new FormData()
-      fd.append('file', file)
-      const res = await fetch(`${apiBase}/agent/${agent.agent_id}/upload`, { method: 'POST', body: fd, headers: { Authorization: `Bearer ${token}` } })
-      await res.json()
-      await refreshStats()
+      // Upload via WS to avoid relying on agent HTTP reachability
+      const dataUrl: string = await new Promise((resolve, reject) => {
+        const fr = new FileReader()
+        fr.onload = () => resolve(String(fr.result || ''))
+        fr.onerror = () => reject(fr.error)
+        fr.readAsDataURL(file)
+      })
+      dashboardSocket.sendAgentJson(agent.agent_id, { type: 'upload_data', name: file.name, data_url: dataUrl })
+      // Give agent a moment to write the file, then refresh listing
+      setTimeout(() => refreshStats(), 800)
     } catch {}
     setUploading(false)
     if (uploadRef.current) uploadRef.current.value = ''
