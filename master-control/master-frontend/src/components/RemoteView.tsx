@@ -26,9 +26,22 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
       setFrame(f.data)
       setNativeW(f.w)
       setNativeH(f.h)
+      setRunning(true)
+      try { localStorage.setItem(`mc:screenRunning:${agentId}`, '1') } catch {}
     }
     dashboardSocket.onScreen(agentId, cb)
     return () => dashboardSocket.offScreen(agentId, cb)
+  }, [agentId])
+
+  // Resume screen streaming after refresh if previously running
+  useEffect(() => {
+    try {
+      const key = `mc:screenRunning:${agentId}`
+      if (localStorage.getItem(key) === '1') {
+        startScreen()
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId])
 
   useEffect(() => {
@@ -45,10 +58,11 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
     img.src = frame
   }, [frame, recording, nativeW, nativeH])
 
-  const startScreen = () => { dashboardSocket.startScreen(agentId, { fps: fps === 'default' ? undefined : fps, quality: q, height: res }); setRunning(true) }
+  const startScreen = () => { dashboardSocket.startScreen(agentId, { fps: fps === 'default' ? undefined : fps, quality: q, height: res }); setRunning(true); try { localStorage.setItem(`mc:screenRunning:${agentId}`, '1') } catch {} }
   const stopScreen = async () => {
     dashboardSocket.stopScreen(agentId);
     setRunning(false);
+    try { localStorage.removeItem(`mc:screenRunning:${agentId}`) } catch {}
     try {
       // if last canvas frame available, export and upload to history
       const cvs = canvasRef.current
@@ -260,11 +274,8 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
             </select>
             <input className="input" type="number" min={10} max={95} step={1} value={q} onChange={(e) => setQ(Math.max(10, Math.min(95, parseInt(e.target.value)||70)))} style={{ width: 80 }} title="JPEG quality" />
           </div>
-          {!running ? (
-            <button className="btn" onClick={startScreen}>Start Remote Screen</button>
-          ) : (
-            <button className="btn secondary" onClick={stopScreen}>Stop</button>
-          )}
+          <button className="btn" onClick={startScreen}>Start Remote Screen</button>
+          <button className="btn secondary" onClick={stopScreen}>Stop Remote Screen</button>
           {!recording ? (
             <button className="btn" onClick={startRecord} disabled={!running}>Start Screen Record</button>
           ) : (

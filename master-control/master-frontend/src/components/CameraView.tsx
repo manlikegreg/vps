@@ -30,6 +30,7 @@ export default function CameraView({ agentId, agentName, enabled, onStarted, onS
   useEffect(() => {
     const cb = (f: { data: string; w?: number; h?: number }) => {
       setFrame(f.data)
+      setRunning(true)
       frameRef.current = f.data
       const cvs = getCanvas()
       const img = new Image()
@@ -48,32 +49,14 @@ export default function CameraView({ agentId, agentName, enabled, onStarted, onS
   const stop = async () => {
     dashboardSocket.stopCamera(agentId);
     setRunning(false);
-    try {
-      // export last frame as photo
-      const cvs = getCanvas()
-      const blob: Blob = await new Promise((res) => cvs.toBlob((b) => res(b || new Blob()), 'image/jpeg', 0.9)!)
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url; a.download = `camera-${(agentName||agentId).replace(/[^\w\-\. ]+/g, '_')}-${Date.now()}.jpg`
-      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url)
-      // upload to backend history
-      try {
-        const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || (typeof window !== 'undefined' ? window.location.origin : '')
-        const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
-        const fd = new FormData()
-        fd.append('file', blob, 'camera.jpg')
-        fd.append('agent_id', agentId)
-        fd.append('kind', 'camera_photo')
-        await fetch(`${apiBase}/admin/history/upload`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd })
-      } catch {}
-    } catch {}
+    // No auto-download on stop to avoid unexpected downloads when navigating
     setFrame(null);
     try { onStopped && onStopped() } catch {}
   }
 
-  // Do not auto-start; only stop on unmount if running
+  // On unmount, just send stop to agent without any downloads
   useEffect(() => {
-    return () => { try { stop(); } catch {} };
+    return () => { try { dashboardSocket.stopCamera(agentId); } catch {} };
   }, []);
 
   const takePhoto = async () => {
