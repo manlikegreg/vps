@@ -171,6 +171,7 @@ export default function CameraView({ agentId, agentName, enabled, onStarted, onS
           ) : (
             <button className="btn secondary" onClick={stopRecord}>Stop Record</button>
           )}
+          <button className="btn secondary" onClick={() => setShowPanel(true)}>Camera History</button>
           <button className="btn secondary" onClick={() => { const url = `${window.location.origin}/camera.html?agentId=${encodeURIComponent(agentId)}&agentName=${encodeURIComponent(agentName)}`; window.open(url, '_blank'); }}>Open in New Tab</button>
         </div>
       </div>

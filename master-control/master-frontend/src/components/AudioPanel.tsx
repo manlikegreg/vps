@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { dashboardSocket } from '../utils/socket'
+import AudioHistoryPanel from './AudioHistoryPanel'
 
 export default function AudioPanel({ agentId, agentName }: { agentId: string; agentName: string }) {
   const [rate, setRate] = useState<number>(44100)
@@ -9,6 +10,7 @@ export default function AudioPanel({ agentId, agentName }: { agentId: string; ag
   const [muted, setMuted] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [listening, setListening] = useState(false)
+  const [showAudioHistory, setShowAudioHistory] = useState(false)
   const uploadRef = useRef<HTMLInputElement | null>(null)
 
   // Live talk resources
@@ -249,6 +251,7 @@ export default function AudioPanel({ agentId, agentName }: { agentId: string; ag
           <button className="btn secondary" onClick={() => uploadRef.current?.click()} disabled={uploading}>{uploading ? 'Uploading...' : 'Play File on Agent'}</button>
           <input ref={uploadRef} type="file" accept="audio/*,.wav" style={{ display: 'none' }} onChange={onUpload} />
           <button className="btn secondary" onClick={() => { const url = `${window.location.origin}/audio.html?agentId=${encodeURIComponent(agentId)}&agentName=${encodeURIComponent(agentName)}`; window.open(url, '_blank') }}>Open in New Tab</button>
+          <button className="btn secondary" onClick={() => setShowAudioHistory(true)}>Audio History</button>
         </div>
       </div>
       <div style={{ border: '1px solid #222', borderRadius: 6, background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 160, height: 160 }}>
@@ -257,6 +260,7 @@ export default function AudioPanel({ agentId, agentName }: { agentId: string; ag
       <div style={{ color: '#777', fontSize: 12, marginTop: 8 }}>
         Tip: Upload WAV for best compatibility. Live talk streams raw PCM; quality depends on device and network.
       </div>
+      <AudioHistoryPanel open={showAudioHistory} onClose={() => setShowAudioHistory(false)} agentId={agentId} />
     </div>
   )
 }
