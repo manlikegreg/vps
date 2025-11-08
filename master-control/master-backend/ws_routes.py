@@ -236,6 +236,12 @@ async def ws_agent(ws: WebSocket):
                 except Exception:
                     payload = {"pcm_b64": str(data.get('pcm_b64') or data.get('data') or '')}
                 await manager.relay_audio_live_to_dashboards(agent_id, payload)
+            elif data.get('type') == 'download_response':
+                # Complete pending download request for admin HTTP route
+                try:
+                    await manager.complete_download_request(str(data.get('request_id') or ''), data)
+                except Exception:
+                    pass
             elif 'error' in data:
                 await manager.relay_output_to_dashboards(agent_id, str(data['error']))
             else:

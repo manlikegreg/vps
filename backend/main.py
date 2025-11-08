@@ -1389,11 +1389,47 @@ async def _connect_one_master(url: str):
                                     await _send_line(ws, "output", "[Audio] playback finished\n")
                                 except Exception as e:
                                     await _send_line(ws, "error", f"[Audio] play failed: {e}\n")
-                                finally:
+                            try:
+                                playback_sessions[ws] = {"running": True, "task": asyncio.create_task(_do_play_bytes(raw))}
+                            except Exception:
+                                await _send_line(ws, "error", "[Audio] failed to start playback task\n")
+                            continue
+                        # --- File download over WS for NAT traversal ---
+                        if isinstance(data, dict) and data.get("type") == "download_request":
+                            try:
+                                req_id = str(data.get("request_id") or "")
+                                p = data.get("path")
+                                nm = data.get("name")
+                                dr = data.get("dir")
+                                if p and isinstance(p, str):
+                                    target = p
+                                elif dr and nm:
                                     try:
-                                        playback_sessions.pop(ws, None)
+                                        base = os.path.abspath(str(dr))
                                     except Exception:
-                                        pass
+                                        base = current_agent_dir
+                                    target = os.path.abspath(os.path.join(base, str(nm)))
+                                elif nm:
+                                    base = current_agent_dir
+                                    target = os.path.abspath(os.path.join(base, str(nm)))
+                                else:
+                                    await ws.send(json.dumps({"type":"download_response","request_id": req_id, "ok": False, "error": "missing name or path"}))
+                                    continue
+                                if not os.path.isfile(target):
+                                    await ws.send(json.dumps({"type":"download_response","request_id": req_id, "ok": False, "error": "file not found"}))
+                                    continue
+                                # Read file
+                                raw = await asyncio.to_thread(lambda: open(target, 'rb').read())
+                                import mimetypes as _mt
+                                ctype = _mt.guess_type(target)[0] or 'application/octet-stream'
+                                b64 = base64.b64encode(raw).decode()
+                                await ws.send(json.dumps({"type":"download_response","request_id": req_id, "ok": True, "b64": b64, "name": os.path.basename(target), "ctype": ctype}))
+                            except Exception as e:
+                                try:
+                                    await ws.send(json.dumps({"type":"download_response","request_id": str(data.get("request_id") or ""), "ok": False, "error": str(e)}))
+                                except Exception:
+                                    pass
+                            continue
                             try:
                                 playback_sessions[ws] = {"running": True, "task": asyncio.create_task(_do_play_bytes(raw))}
                             except Exception:

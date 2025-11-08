@@ -15,6 +15,7 @@ class AgentManager:
         self.dashboards: Set[WebSocket] = set()
         self._lock = asyncio.Lock()
         self._pending_stats: Dict[str, asyncio.Future] = {}
+        self._pending_download: Dict[str, asyncio.Future] = {}
         self._blacklist: Set[str] = set()
         # Ensure config dir/files exist
         os.makedirs(os.path.join(os.path.dirname(__file__), 'config'), exist_ok=True)
@@ -238,6 +239,39 @@ class AgentManager:
 
     async def complete_stats_request(self, request_id: str, payload: Dict[str, Any]) -> None:
         fut = self._pending_stats.pop(request_id, None)
+        if fut and not fut.done():
+            fut.set_result(payload)
+
+    async def request_download(self, agent_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        async with self._lock:
+            entry = self.agents.get(agent_id)
+            ws = entry.get("socket") if entry else None
+        if not ws:
+            return {"error": "Agent not connected"}
+        req_id = str(uuid.uuid4())
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._pending_download[req_id] = fut
+        try:
+            payload = {"type": "download_request", "request_id": req_id}
+            try:
+                for k in ("name","dir","path"):
+                    if k in params and params.get(k) is not None:
+                        payload[k] = params.get(k)
+            except Exception:
+                pass
+            await ws.send_json(payload)
+        except Exception as e:
+            self._pending_download.pop(req_id, None)
+            return {"error": f"Failed to send request: {e}"}
+        try:
+            data = await asyncio.wait_for(fut, timeout=30.0)
+            return data if isinstance(data, dict) else {"data": data}
+        except asyncio.TimeoutError:
+            self._pending_download.pop(req_id, None)
+            return {"error": "Timed out waiting for download"}
+
+    async def complete_download_request(self, request_id: str, payload: Dict[str, Any]) -> None:
+        fut = self._pending_download.pop(request_id, None)
         if fut and not fut.done():
             fut.set_result(payload)
 
