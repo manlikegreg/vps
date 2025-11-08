@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type React from 'react'
 import { dashboardSocket } from '../utils/socket'
 import RecordingsPanel from './RecordingsPanel'
 
@@ -22,6 +23,9 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
   const dlDoneRef = useRef<boolean>(false)
 
   useEffect(() => {
+    try { dashboardSocket.stopScreen(agentId) } catch {}
+    setRunning(false)
+    setFrame(null)
     const cb = (f: { data: string; w?: number; h?: number }) => {
       setFrame(f.data)
       setNativeW(f.w)
@@ -46,12 +50,6 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
     img.src = frame
   }, [frame, recording, nativeW, nativeH])
 
-  // Enforce explicit start: when the Remote tab mounts, proactively stop any existing stream
-  useEffect(() => {
-    try { dashboardSocket.stopScreen(agentId) } catch {}
-    setRunning(false)
-    setFrame(null)
-  }, [agentId])
 
   const startScreen = () => { dashboardSocket.startScreen(agentId, { fps: fps === 'default' ? undefined : fps, quality: q, height: res }); setRunning(true) }
   const stopScreen = async () => {
@@ -65,6 +63,7 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
       } catch {}
       setRecording(false)
     }
+  }
 
   const startRecord = () => {
     if (recording) return
