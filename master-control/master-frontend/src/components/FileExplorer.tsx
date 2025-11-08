@@ -17,6 +17,7 @@ export default function FileExplorer({
   onCdTo,
   onDownload,
   onSetWallpaper,
+  onRefresh,
 }: {
   files: FileItem[]
   currentDir: string
@@ -32,6 +33,7 @@ export default function FileExplorer({
   onCdTo: (name: string) => void
   onDownload: (name: string) => void
   onSetWallpaper: (name: string) => void
+  onRefresh: () => void
 }) {
   const [query, setQuery] = useState('')
   const [foldersFirst, setFoldersFirst] = useState(true)
@@ -114,6 +116,7 @@ export default function FileExplorer({
           </div>
         </div>
         <button className="btn secondary" onClick={onUp}>Up</button>
+        <button className="btn secondary" onClick={onRefresh}>Refresh</button>
       </div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
         <input className="input" placeholder="Search files..." value={query} onChange={(e) => setQuery(e.target.value)} />

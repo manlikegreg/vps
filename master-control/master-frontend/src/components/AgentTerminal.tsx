@@ -133,16 +133,13 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
   useEffect(() => {
     const onExit = (code: number) => {
       const lc = (lastCmdRef.current || '').trim().toLowerCase()
-      if (
-        code === 0 && (lc === 'cd' || lc.startsWith('cd ') || lc.startsWith('chdir ')) &&
-        linkExplorerPane !== null && lastPaneRef.current === linkExplorerPane
-      ) {
+      if (code === 0 && (lc === 'cd' || lc.startsWith('cd ') || lc.startsWith('chdir '))) {
         refreshStats()
       }
     }
     dashboardSocket.onExit(agent.agent_id, onExit)
     return () => dashboardSocket.offExit(agent.agent_id, onExit)
-  }, [agent.agent_id, linkExplorerPane])
+  }, [agent.agent_id])
 
   useEffect(() => {
     // auto-exit interactive on process end
@@ -299,6 +296,7 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
             onCdTo={cdTo}
             onDownload={download}
             onSetWallpaper={setWallpaperFromFile}
+            onRefresh={refreshStats}
           />
         </aside>
         {/* Right: Tabs */}
