@@ -62,31 +62,15 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
   const stopScreen = async () => {
     dashboardSocket.stopScreen(agentId);
     setRunning(false);
-    try { localStorage.removeItem(`mc:screenRunning:${agentId}`) } catch {}
-    try {
-      // if last canvas frame available, export and upload to history
-      const cvs = canvasRef.current
-      if (cvs) {
-        const blob: Blob = await new Promise((res) => cvs.toBlob((b) => res(b || new Blob()), 'image/jpeg', 0.9)!)
-        // download
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url; a.download = `screen-${(agentName||agentId).replace(/[^\w\-\. ]+/g, '_')}-${Date.now()}.jpg`
-        document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url)
-        // upload to backend history
-        try {
-          const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || (typeof window !== 'undefined' ? window.location.origin : '')
-          const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
-          const fd = new FormData()
-          fd.append('file', blob, 'screen.jpg')
-          fd.append('agent_id', agentId)
-          fd.append('kind', 'screen_image')
-          await fetch(`${apiBase}/admin/history/upload`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd })
-        } catch {}
-      }
-    } catch {}
     setFrame(null);
     if (recording) {
+      try {
+        const rec: any = recorderRef.current
+        if (rec && rec.state && rec.state !== 'inactive') rec.stop()
+      } catch {}
+      setRecording(false)
+    }
+  }
       try {
         const rec: any = recorderRef.current
         if (rec && rec.state && rec.state !== 'inactive') rec.stop()
@@ -281,6 +265,39 @@ export default function RemoteView({ agentId, agentName, onClose }: { agentId: s
           ) : (
             <button className="btn secondary" onClick={stopRecord}>Stop Record</button>
           )}
+          <button className="btn" onClick={async () => {
+            try {
+              // If we have a current frame, render it to canvas and save
+              const img = new Image()
+              const data = frame
+              if (!data) return
+              await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = () => reject(new Error('image load failed')); img.src = data })
+              const cvs = canvasRef.current || document.createElement('canvas')
+              const w = (nativeW || img.naturalWidth || 0) || 0
+              const h = (nativeH || img.naturalHeight || 0) || 0
+              if (!w || !h) return
+              if (!canvasRef.current) { cvs.width = w; cvs.height = h }
+              const ctx = cvs.getContext('2d')!
+              ctx.drawImage(img, 0, 0, w, h)
+              const blob: Blob = await new Promise((res) => cvs.toBlob((b) => res(b || new Blob()), 'image/jpeg', 0.9)!)
+              // download
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement('a')
+              const safe = (agentName||agentId).replace(/[^\w\-\. ]+/g, '_')
+              a.href = url; a.download = `screen-${safe}-${Date.now()}.jpg`
+              document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url)
+              // upload to backend history
+              try {
+                const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || (typeof window !== 'undefined' ? window.location.origin : '')
+                const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
+                const fd = new FormData()
+                fd.append('file', blob, 'screen.jpg')
+                fd.append('agent_id', agentId)
+                fd.append('kind', 'screen_image')
+                await fetch(`${apiBase}/admin/history/upload`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd })
+              } catch {}
+            } catch {}
+          }}>Screenshot</button>
           <button className="btn secondary" onClick={() => setExpanded((v) => !v)}>{expanded ? 'Shrink' : 'Enlarge'}</button>
           <button className="btn secondary" onClick={() => setShowRecs(true)}>Recordings</button>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: '#ddd' }}>
