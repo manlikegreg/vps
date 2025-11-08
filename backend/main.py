@@ -1006,7 +1006,7 @@ async def _connect_one_master(url: str):
                                         raw = sct.grab(mon)
                                         img = Image.frombytes('RGB', raw.size, raw.rgb)
                                         buf = io.BytesIO()
-                                        img.save(buf, format='JPEG', quality=quality, optimize=True)
+img.save(buf, format='JPEG', quality=quality, subsampling=2, optimize=True, progressive=True)
                                         b64 = base64.b64encode(buf.getvalue()).decode()
                                         payload = {"type": "screen_frame", "w": native_w, "h": native_h, "ts": int(t0*1000), "data": f"data:image/jpeg;base64,{b64}"}
                                         try:
@@ -1978,7 +1978,7 @@ async def _connect_one_master(url: str):
                                                 except Exception:
                                                     send_img = img
                                             buf = io.BytesIO()
-                                            send_img.save(buf, format='JPEG', quality=quality, optimize=True)
+send_img.save(buf, format='JPEG', quality=quality, subsampling=2, optimize=True, progressive=True)
                                             b64 = base64.b64encode(buf.getvalue()).decode()
                                             payload = {"type": "screen_frame", "w": native_w, "h": native_h, "ts": int(t0*1000), "data": f"data:image/jpeg;base64,{b64}"}
                                             try:
