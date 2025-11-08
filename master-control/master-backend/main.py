@@ -171,7 +171,12 @@ async def set_agent_alias(agent_id: str, body: AliasBody, _: bool = Depends(auth
 
 # Protect existing REST endpoints
 @app.get('/agent/{agent_id}/stats')
-async def agent_stats(agent_id: str, _: bool = Depends(auth_required)):
+async def agent_stats(agent_id: str, session_id: str | None = None, _: bool = Depends(auth_required)):
+    # If a session_id is provided, use WS RPC so the agent can resolve pane-linked working directories
+    if isinstance(session_id, str) and session_id:
+        data = await manager.request_stats(agent_id, session_id=session_id)
+        status = 200 if not (isinstance(data, dict) and data.get("error")) else 502
+        return JSONResponse(status_code=status, content=data)
     http_base = await manager.get_agent_http_base(agent_id)
     # Try direct HTTP to agent first (works when reachable)
     if http_base:

@@ -94,7 +94,11 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
 
   const refreshStats = async () => {
     try {
-      const res = await fetch(`${apiBase}/agent/${agent.agent_id}/stats`, { headers: { Authorization: `Bearer ${token}` } })
+      // Prefer stats for the linked pane (session_id) so explorer reflects that pane's cwd
+      const paneIdx = (linkExplorerPane !== null && typeof linkExplorerPane === 'number') ? linkExplorerPane : (lastPaneRef.current || 0)
+      const sid = `pane-${paneIdx}`
+      const url = `${apiBase}/agent/${agent.agent_id}/stats?session_id=${encodeURIComponent(sid)}`
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
       const data = await res.json()
       setFiles(Array.isArray(data?.files) ? data.files : [])
       setCurrentDir(typeof data?.current_dir === 'string' ? data.current_dir : '')
@@ -139,7 +143,7 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
     }
     dashboardSocket.onExit(agent.agent_id, onExit)
     return () => dashboardSocket.offExit(agent.agent_id, onExit)
-  }, [agent.agent_id])
+  }, [agent.agent_id, linkExplorerPane])
 
   useEffect(() => {
     // auto-exit interactive on process end
@@ -150,13 +154,15 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
 
   const cdUp = () => {
     lastCmdRef.current = 'cd ..'
-    const sid = `pane-${(linkExplorerPane ?? lastPaneRef.current)}`
+    const paneIdx = (linkExplorerPane !== null && typeof linkExplorerPane === 'number') ? linkExplorerPane : (lastPaneRef.current || 0)
+    const sid = `pane-${paneIdx}`
     dashboardSocket.sendPaneCommand(agent.agent_id, 'cd ..', sid)
   }
   const cdTo = (name: string) => {
     const cmd = `cd \"${name.replace(/\\\"/g, '\\\\\\\"').replace(/\"/g, '\\\"')}\"`
     lastCmdRef.current = cmd
-    const sid = `pane-${(linkExplorerPane ?? lastPaneRef.current)}`
+    const paneIdx = (linkExplorerPane !== null && typeof linkExplorerPane === 'number') ? linkExplorerPane : (lastPaneRef.current || 0)
+    const sid = `pane-${paneIdx}`
     dashboardSocket.sendPaneCommand(agent.agent_id, cmd, sid)
   }
 

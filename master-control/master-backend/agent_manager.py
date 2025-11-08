@@ -212,7 +212,7 @@ class AgentManager:
         except Exception:
             return False
 
-    async def request_stats(self, agent_id: str) -> Dict[str, Any]:
+    async def request_stats(self, agent_id: str, session_id: str | None = None) -> Dict[str, Any]:
         async with self._lock:
             entry = self.agents.get(agent_id)
             ws = entry.get("socket") if entry else None
@@ -222,7 +222,10 @@ class AgentManager:
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         self._pending_stats[req_id] = fut
         try:
-            await ws.send_json({"type": "stats_request", "request_id": req_id})
+            payload = {"type": "stats_request", "request_id": req_id}
+            if isinstance(session_id, str) and session_id:
+                payload["session_id"] = session_id
+            await ws.send_json(payload)
         except Exception as e:
             self._pending_stats.pop(req_id, None)
             return {"error": f"Failed to send request: {e}"}
