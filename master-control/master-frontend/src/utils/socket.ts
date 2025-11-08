@@ -332,6 +332,61 @@ class DashboardSocket {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.pending.push({ target: agentId, payload: p }); this.connect(); return; }
     this.ws.send(JSON.stringify({ target: agentId, ...p }));
   }
+
+  // --- Audio controls ---
+  audioStart(agentId: string, opts?: { sample_rate?: number; channels?: number; max_seconds?: number }) {
+    const p: any = { type: 'audio_start' };
+    if (opts?.sample_rate) p.sample_rate = opts.sample_rate;
+    if (opts?.channels) p.channels = opts.channels;
+    if (opts?.max_seconds) p.max_seconds = opts.max_seconds;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.pending.push({ target: agentId, payload: p }); this.connect(); return; }
+    this.ws.send(JSON.stringify({ target: agentId, ...p }));
+  }
+
+  audioStop(agentId: string) {
+    const p: any = { type: 'audio_stop' };
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.pending.push({ target: agentId, payload: p }); this.connect(); return; }
+    this.ws.send(JSON.stringify({ target: agentId, ...p }));
+  }
+
+  audioPlayPath(agentId: string, path: string) {
+    const p: any = { type: 'audio_play_path', path };
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.pending.push({ target: agentId, payload: p }); this.connect(); return; }
+    this.ws.send(JSON.stringify({ target: agentId, ...p }));
+  }
+
+  audioPlayData(agentId: string, dataUrlOrBase64: string) {
+    const p: any = { type: 'audio_play_data', data: dataUrlOrBase64 };
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.pending.push({ target: agentId, payload: p }); this.connect(); return; }
+    this.ws.send(JSON.stringify({ target: agentId, ...p }));
+  }
+
+  // --- Intercom (master -> agent live audio) ---
+  intercomStart(agentId: string, opts?: { sample_rate?: number; channels?: number }) {
+    const p: any = { type: 'intercom_start' };
+    if (opts?.sample_rate) p.sample_rate = opts.sample_rate;
+    if (opts?.channels) p.channels = opts.channels;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.pending.push({ target: agentId, payload: p }); this.connect(); return; }
+    this.ws.send(JSON.stringify({ target: agentId, ...p }));
+  }
+
+  intercomSendChunk(agentId: string, payload: { pcm_b64?: string; data?: string; data_url?: string }) {
+    const p: any = { type: 'intercom_chunk', ...payload };
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { /* drop silently to avoid queue bloat */ this.connect(); return; }
+    this.ws.send(JSON.stringify({ target: agentId, ...p }));
+  }
+
+  intercomMute(agentId: string, mute: boolean) {
+    const p: any = { type: 'intercom_mute', mute: !!mute };
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.pending.push({ target: agentId, payload: p }); this.connect(); return; }
+    this.ws.send(JSON.stringify({ target: agentId, ...p }));
+  }
+
+  intercomStop(agentId: string) {
+    const p: any = { type: 'intercom_stop' };
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.pending.push({ target: agentId, payload: p }); this.connect(); return; }
+    this.ws.send(JSON.stringify({ target: agentId, ...p }));
+  }
 }
 
 export const dashboardSocket = new DashboardSocket();

