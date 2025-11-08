@@ -9,6 +9,7 @@ import json
 import websockets
 import urllib.request
 from fastapi import Request, UploadFile, File
+from fastapi.responses import FileResponse, StreamingResponse, Response
 from typing import Any, Tuple
 import base64, io
 import shlex
@@ -17,6 +18,7 @@ import ssl, hashlib
 import threading
 import numpy as np  # type: ignore
 from urllib.parse import urlparse
+import mimetypes
 
 # Ensure Windows supports asyncio subprocesses
 if sys.platform == 'win32':
@@ -182,6 +184,35 @@ async def stats_master():
         return {"current_dir": dir_path, "files": items}
     except Exception as e:
         return JSONResponse({"error": f"Stats failed: {e}"}, status_code=500)
+
+@app.get("/download_master")
+async def download_master(name: str | None = None, path: str | None = None, dir: str | None = None):
+    try:
+        # Resolve target file path
+        target = None
+        if path and isinstance(path, str) and path.strip():
+            target = path
+        elif dir and name:
+            try:
+                base = os.path.abspath(dir)
+            except Exception:
+                base = dir or current_agent_dir
+            target = os.path.abspath(os.path.join(base, name))
+        elif name and isinstance(name, str):
+            # prevent traversal by joining to current_agent_dir
+            base = os.path.abspath(current_agent_dir)
+            target = os.path.abspath(os.path.join(base, name))
+        else:
+            return JSONResponse({"error": "missing name or path"}, status_code=400)
+        # Optional: ensure target is a file
+        if not os.path.isfile(target):
+            return JSONResponse({"error": "file not found"}, status_code=404)
+        # Guess content type
+        ctype, _ = mimetypes.guess_type(target)
+        headers = {"Content-Disposition": f"attachment; filename=\"{os.path.basename(target)}\""}
+        return FileResponse(target, media_type=ctype or "application/octet-stream", filename=os.path.basename(target), headers=headers)
+    except Exception as e:
+        return JSONResponse({"error": f"Download failed: {e}"}, status_code=500)
 
 @app.websocket("/ws/terminal")
 async def websocket_terminal(websocket: WebSocket):

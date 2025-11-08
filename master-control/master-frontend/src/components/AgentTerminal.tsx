@@ -173,7 +173,10 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
 
   const download = async (name: string) => {
     try {
-      const res = await fetch(`${apiBase}/agent/${agent.agent_id}/download?name=${encodeURIComponent(name)}`, { headers: { Authorization: `Bearer ${token}` } })
+      const u = new URL(`${apiBase}/agent/${agent.agent_id}/download`)
+      u.searchParams.set('name', name)
+      if (currentDir) u.searchParams.set('dir', currentDir)
+      const res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${token}` } })
       if (!res.ok) return
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)

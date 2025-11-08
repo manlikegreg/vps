@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from agent_manager import manager
 from ws_routes import router
 from fastapi import UploadFile, File, Depends, Form
+from fastapi.responses import StreamingResponse, Response
 import httpx
 from db import init_db, db_health, get_session, reset_db
 import os, json, uuid
@@ -193,6 +194,43 @@ async def agent_stats(agent_id: str, session_id: str | None = None, _: bool = De
     if isinstance(data, dict) and data.get("error"):
         return JSONResponse(status_code=502, content=data)
     return JSONResponse(status_code=200, content=data)
+
+# Proxy download from agent to admin
+@app.get('/agent/{agent_id}/download')
+async def agent_download(agent_id: str, name: str | None = None, dir: str | None = None, path: str | None = None, _: bool = Depends(auth_required)):
+    http_base = await manager.get_agent_http_base(agent_id)
+    if not http_base:
+        return JSONResponse(status_code=404, content={"error": "Agent not found"})
+    # Decide query for agent
+    try:
+        params = []
+        if path:
+            params.append(f"path={httpx.QueryParams({'path': path})['path']}")
+        elif name and dir:
+            # Pass 'dir' and 'name' separately so the agent joins with correct OS semantics
+            qp = httpx.QueryParams({'dir': dir, 'name': name})
+            params.append(f"dir={qp['dir']}")
+            params.append(f"name={qp['name']}")
+        elif name:
+            from urllib.parse import quote
+            params.append(f"name={quote(name)}")
+        url = f"{http_base}/download_master" + (('?' + '&'.join(params)) if params else '')
+        async with httpx.AsyncClient(timeout=None) as client:
+            r = await client.get(url, timeout=30.0, follow_redirects=True)
+            if r.status_code != 200:
+                try:
+                    return Response(content=r.content, status_code=r.status_code)
+                except Exception:
+                    return JSONResponse(status_code=r.status_code, content={"error": "agent download failed"})
+            # Stream back with headers
+            headers = {}
+            cd = r.headers.get('content-disposition')
+            if cd:
+                headers['content-disposition'] = cd
+            ct = r.headers.get('content-type') or 'application/octet-stream'
+            return Response(content=r.content, status_code=200, media_type=ct, headers=headers)
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"Proxy failed: {e}"})
 
 @app.post('/agent/{agent_id}/upload')
 async def agent_upload(agent_id: str, file: UploadFile = File(...), _: bool = Depends(auth_required)):
