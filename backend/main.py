@@ -1811,6 +1811,14 @@ img.save(buf, format='JPEG', quality=quality, subsampling=2, optimize=True, prog
                                         except Exception:
                                             pass
                                         return
+                                    # Try to set camera native resolution close to target to reduce CPU
+                                    try:
+                                        if isinstance(target_h, int) and target_h > 0:
+                                            import cv2 as _cv2  # type: ignore
+                                            # Attempt to set CAP_PROP_FRAME_HEIGHT and width
+                                            await asyncio.to_thread(lambda: cap.set( _cv2.CAP_PROP_FRAME_HEIGHT, float(target_h) ))
+                                    except Exception:
+                                        pass
                                     interval = 1.0 / float(fps)
                                     while camera_sessions.get(ws, {}).get("running"):
                                         t0 = time.time()
@@ -1829,18 +1837,20 @@ img.save(buf, format='JPEG', quality=quality, subsampling=2, optimize=True, prog
                                                     frame = await asyncio.to_thread(lambda: _cv2.resize(frame, (tw, target_h)))
                                         except Exception:
                                             pass
-                                        # Encode JPEG
-                                        def _encode(f):
-                                            import cv2
-                                            import numpy as _np  # noqa
-                                            params = [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)]
-                                            ok2, buf = cv2.imencode('.jpg', f, params)
-                                            return ok2, buf
-                                        ok2, buf = await asyncio.to_thread(_encode, frame)
+                                        # Encode JPEG (PIL, optimized subsampling/progressive)
+                                        def _encode_pil(f):
+                                            import cv2 as _cv2  # type: ignore
+                                            from PIL import Image  # type: ignore
+                                            rgb = _cv2.cvtColor(f, _cv2.COLOR_BGR2RGB)
+                                            img = Image.fromarray(rgb)
+                                            buf = io.BytesIO()
+                                            img.save(buf, format='JPEG', quality=int(quality), subsampling=2, optimize=True, progressive=True)
+                                            return True, buf.getvalue()
+                                        ok2, raw = await asyncio.to_thread(_encode_pil, frame)
                                         if not ok2:
                                             await asyncio.sleep(0.05)
                                             continue
-                                        b64 = base64.b64encode(buf.tobytes()).decode()
+                                        b64 = base64.b64encode(raw).decode()
                                         h, w = frame.shape[:2]
                                         payload = {"type": "camera_frame", "w": int(w), "h": int(h), "ts": int(t0*1000), "data": f"data:image/jpeg;base64,{b64}"}
                                         try:
