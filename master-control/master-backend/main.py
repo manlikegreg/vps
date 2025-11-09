@@ -24,6 +24,12 @@ from telegram_notify import (
     activate_bot as tg_activate_bot,
     test_bot as tg_test_bot,
     send_telegram,
+    set_webhook_base as tg_set_webhook,
+    delete_webhook as tg_delete_webhook,
+    webhook_info as tg_webhook_info,
+    get_webhook_secret as tg_get_webhook_secret,
+    is_allowed_chat as tg_is_allowed_chat,
+    send_to_chat_id as tg_send_to_chat,
 )
 
 # Load environment variables from .env
@@ -352,6 +358,9 @@ class TelegramSendBody(BaseModel):
     id: str | None = None
     disable_notification: bool | None = None
 
+class TelegramWebhookBody(BaseModel):
+    base_url: str
+
 @app.get('/admin/telegram')
 async def telegram_get(_: bool = Depends(auth_required)):
     data = tg_list_bots()
@@ -395,6 +404,21 @@ async def telegram_send(body: TelegramSendBody, _: bool = Depends(auth_required)
     from telegram_notify import send_telegram_text
     ok = await send_telegram_text(txt, body.id or None, bool(body.disable_notification))
     return JSONResponse(content={"ok": ok})
+
+@app.get('/admin/telegram/webhook')
+async def telegram_webhook_info(_: bool = Depends(auth_required)):
+    info = tg_webhook_info()
+    return JSONResponse(content=info)
+
+@app.post('/admin/telegram/webhook/set')
+async def telegram_webhook_set(body: TelegramWebhookBody, _: bool = Depends(auth_required)):
+    res = tg_set_webhook(body.base_url)
+    return JSONResponse(content=res)
+
+@app.post('/admin/telegram/webhook/delete')
+async def telegram_webhook_delete(_: bool = Depends(auth_required)):
+    res = tg_delete_webhook()
+    return JSONResponse(content=res)
 
 # --- History endpoints ---
 @app.post('/admin/history/upload')
@@ -544,3 +568,91 @@ async def _init_db():
         asyncio.create_task(send_telegram('✅ <b>Master Control backend started</b>'))
     except Exception:
         pass
+
+# --- Telegram webhook receiver ---
+from fastapi import Request
+
+@app.post('/telegram/webhook/{secret}')
+async def telegram_webhook(secret: str, request: Request):
+    # Verify secret
+    saved = tg_get_webhook_secret()
+    if not saved or str(secret) != str(saved):
+        return JSONResponse(status_code=404, content={"ok": False})
+    try:
+        update = await request.json()
+    except Exception:
+        return JSONResponse(content={"ok": True})
+    try:
+        msg = (update or {}).get('message') or {}
+        chat = msg.get('chat') or {}
+        chat_id = chat.get('id')
+        text = (msg.get('text') or '').strip()
+        if not chat_id or not text:
+            return JSONResponse(content={"ok": True})
+        # Allow only configured chat
+        if not tg_is_allowed_chat(chat_id):
+            return JSONResponse(content={"ok": True})
+        # Parse command
+        cmdline = text.strip()
+        if not cmdline.startswith('/'):
+            return JSONResponse(content={"ok": True})
+        parts = cmdline.split()
+        raw = parts[0][1:].lower()
+        cmd = raw.split('@', 1)[0]
+        args = parts[1:]
+        async def reply(s: str):
+            await tg_send_to_chat(s, chat_id)
+        if cmd in ('start','help'):
+            await reply('Commands:\n/agents [n] — list online agents\n/online — count online agents\n/stop_all <agent_id> — stop all activities on agent\n/ssh_start <agent_id> — start agent side-channel SSH\n/ssh_stop <agent_id> — stop agent side-channel SSH\n/ping — pong')
+        elif cmd == 'ping':
+            await reply('pong')
+        elif cmd == 'online':
+            agents = await manager.get_agents()
+            n = sum(1 for a in agents if a.get('online'))
+            await reply(f'Online: {n}')
+        elif cmd == 'agents':
+            limit = 10
+            if args:
+                try:
+                    limit = max(1, min(50, int(args[0])))
+                except Exception:
+                    pass
+            agents = [a for a in await manager.get_agents() if a.get('online')]
+            agents = agents[:limit]
+            if not agents:
+                await reply('No agents online')
+            else:
+                lines = []
+                for a in agents:
+                    nm = a.get('alias') or a.get('name') or a.get('agent_id')
+                    aid = a.get('agent_id')
+                    ip = a.get('public_ip') or ''
+                    lines.append(f'- {nm} (ID: {aid}){f" IP: {ip}" if ip else ""}')
+                await reply('\n'.join(lines))
+        elif cmd == 'stop_all':
+            if not args:
+                await reply('Usage: /stop_all <agent_id>')
+            else:
+                aid = args[0]
+                ok = await manager.forward_json(aid, {"type": "stop_all"})
+                await reply('sent' if ok else 'failed (agent offline?)')
+        elif cmd == 'ssh_start':
+            if not args:
+                await reply('Usage: /ssh_start <agent_id>')
+            else:
+                aid = args[0]
+                ok = await manager.forward_json(aid, {"type": "ssh_start"})
+                await reply('sent' if ok else 'failed (agent offline?)')
+        elif cmd == 'ssh_stop':
+            if not args:
+                await reply('Usage: /ssh_stop <agent_id>')
+            else:
+                aid = args[0]
+                ok = await manager.forward_json(aid, {"type": "ssh_stop"})
+                await reply('sent' if ok else 'failed (agent offline?)')
+        else:
+            await reply('Unknown command. Use /help')
+    except Exception:
+        # swallow
+        pass
+    return JSONResponse(content={"ok": True})

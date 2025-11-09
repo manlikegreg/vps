@@ -34,6 +34,10 @@ export default function TelegramPanel({ open, token, onClose }: Props) {
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
 
+  const [whUrl, setWhUrl] = useState<string | null>(null)
+  const [whInfo, setWhInfo] = useState<any>(null)
+  const [whBase, setWhBase] = useState<string>('')
+
   const load = async () => {
     setLoading(true)
     setError(null)
@@ -45,7 +49,14 @@ export default function TelegramPanel({ open, token, onClose }: Props) {
       setHasEnv(!!j?.has_env)
     } catch (e: any) {
       setError(String(e?.message || e))
-    } finally {
+    }
+    try {
+      const r2 = await fetch(`${apiBase}/admin/telegram/webhook`, { headers })
+      const j2 = await r2.json()
+      setWhUrl(j2?.url || null)
+      setWhInfo(j2?.info || null)
+    } catch {}
+    finally {
       setLoading(false)
     }
   }
@@ -184,6 +195,46 @@ export default function TelegramPanel({ open, token, onClose }: Props) {
                 <input placeholder="Thread ID (optional)" value={newThreadId} onChange={(e) => setNewThreadId(e.target.value)} />
                 <input placeholder="Bot Token" value={newToken} onChange={(e) => setNewToken(e.target.value)} />
                 <button className="btn" onClick={addBot} disabled={adding || !newToken || !newChatId}>{adding ? 'Adding…' : 'Add'}</button>
+              </div>
+            </div>
+
+            <div className="card">
+              <h4>Webhook</h4>
+              {whUrl ? (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span>Active:</span>
+                  <code style={{ fontSize: 12 }}>{whUrl}</code>
+                  <button className="btn small" onClick={() => navigator.clipboard?.writeText(whUrl)}>Copy</button>
+                  <button className="btn small danger" onClick={async () => {
+                    setError(null)
+                    try {
+                      const r = await fetch(`${apiBase}/admin/telegram/webhook/delete`, { method: 'POST', headers })
+                      const j = await r.json()
+                      if (!j?.ok) throw new Error(j?.error || 'Remove failed')
+                      await load()
+                    } catch (e: any) {
+                      setError(String(e?.message || e))
+                    }
+                  }}>Remove</button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input placeholder="Public base URL (e.g. https://mastervpsback.onrender.com)" value={whBase} onChange={(e) => setWhBase(e.target.value)} style={{ minWidth: 420 }} />
+                  <button className="btn" onClick={async () => {
+                    setError(null)
+                    try {
+                      const r = await fetch(`${apiBase}/admin/telegram/webhook/set`, { method: 'POST', headers, body: JSON.stringify({ base_url: whBase }) })
+                      const j = await r.json()
+                      if (!j?.ok) throw new Error(j?.error || 'Setup failed')
+                      await load()
+                    } catch (e: any) {
+                      setError(String(e?.message || e))
+                    }
+                  }}>Set Webhook</button>
+                </div>
+              )}
+              <div style={{ marginTop: 6, color: '#888', fontSize: 12 }}>
+                {(whInfo?.result || whInfo)?.url ? `Telegram: ${(whInfo?.result || whInfo)?.url}` : 'Telegram webhook info unavailable'}
               </div>
             </div>
 

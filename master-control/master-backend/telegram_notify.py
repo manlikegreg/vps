@@ -38,10 +38,12 @@ def _load_cfg() -> Dict[str, Any]:
                 if isinstance(data, dict):
                     data.setdefault('bots', [])
                     data.setdefault('active_id', None)
+                    data.setdefault('webhook_secret', None)
+                    data.setdefault('webhook_url', None)
                     return data
     except Exception:
         pass
-    return {"bots": [], "active_id": None}
+    return {"bots": [], "active_id": None, "webhook_secret": None, "webhook_url": None}
 
 def _save_cfg(cfg: Dict[str, Any]) -> bool:
     _ensure_config_dir()
@@ -114,6 +116,84 @@ def delete_bot(bot_id: str) -> bool:
         cfg['active_id'] = new_bots[0]['id'] if new_bots else None
     _save_cfg(cfg)
     return True
+
+# --- Webhook management ---
+
+def ensure_webhook_secret() -> str:
+    cfg = _load_cfg()
+    if not cfg.get('webhook_secret'):
+        cfg['webhook_secret'] = uuid.uuid4().hex
+        _save_cfg(cfg)
+    return str(cfg['webhook_secret'])
+
+def get_webhook_secret() -> str | None:
+    cfg = _load_cfg()
+    return cfg.get('webhook_secret')
+
+def set_webhook_base(base_url: str) -> Dict[str, Any]:
+    token, _, _ = _active_settings()
+    if not token:
+        return {"ok": False, "error": "no_token"}
+    base = (base_url or '').strip().rstrip('/')
+    if not base.startswith('http://') and not base.startswith('https://'):
+        return {"ok": False, "error": "invalid_base_url"}
+    secret = ensure_webhook_secret()
+    url = f"{base}/telegram/webhook/{secret}"
+    try:
+        with httpx.Client(timeout=6.0) as client:
+            r = client.post(f"https://api.telegram.org/bot{token}/setWebhook", data={"url": url})
+            if r.status_code == 200 and (r.json() or {}).get('ok'):
+                cfg = _load_cfg()
+                cfg['webhook_url'] = url
+                _save_cfg(cfg)
+                return {"ok": True, "url": url}
+            else:
+                return {"ok": False, "error": (r.json() if 'application/json' in (r.headers.get('content-type') or '') else r.text)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+def delete_webhook() -> Dict[str, Any]:
+    token, _, _ = _active_settings()
+    if not token:
+        return {"ok": False, "error": "no_token"}
+    try:
+        with httpx.Client(timeout=6.0) as client:
+            r = client.post(f"https://api.telegram.org/bot{token}/setWebhook", data={"url": ''})
+            ok = (r.status_code == 200 and (r.json() or {}).get('ok'))
+            if ok:
+                cfg = _load_cfg()
+                cfg['webhook_url'] = None
+                _save_cfg(cfg)
+            return {"ok": ok}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+def webhook_info() -> Dict[str, Any]:
+    token, _, _ = _active_settings()
+    if not token:
+        return {"ok": False, "error": "no_token"}
+    try:
+        with httpx.Client(timeout=6.0) as client:
+            r = client.get(f"https://api.telegram.org/bot{token}/getWebhookInfo")
+            if r.status_code == 200:
+                cfg = _load_cfg()
+                data = r.json()
+                return {"ok": True, "info": data, "url": cfg.get('webhook_url')}
+            return {"ok": False, "error": r.text}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+def is_allowed_chat(chat_id: int | str) -> bool:
+    try:
+        cid = str(chat_id)
+    except Exception:
+        return False
+    _, chat_id_cfg, _ = _active_settings()
+    return bool(chat_id_cfg) and (str(chat_id_cfg) == cid)
+
+async def send_to_chat_id(text: str, chat_id: str | int, disable_notification: bool = False) -> bool:
+    token, _, thread_id = _active_settings()
+    return await _send(token, str(chat_id), text, thread_id, disable_notification)
 
 def activate_bot(bot_id: str) -> bool:
     cfg = _load_cfg()
