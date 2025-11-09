@@ -1,11 +1,12 @@
 import json
 from typing import Dict, Any, List, Set
-from telegram_notify import send_telegram
 from fastapi import WebSocket
 import asyncio
 import aiofiles
 import os
 import uuid
+import httpx
+from telegram_notify import send_telegram
 
 AGENTS_FILE = os.path.join(os.path.dirname(__file__), 'config', 'agents.json')
 BLACKLIST_FILE = os.path.join(os.path.dirname(__file__), 'config', 'blacklist.json')
@@ -81,13 +82,22 @@ class AgentManager:
             }
         await self.persist_agents()
         await self.broadcast_agents()
-        # Notify on first online transition
+        # Notify on first online transition with specs if possible
         try:
             if not was_online:
                 alias = self.agents.get(agent_id, {}).get("alias")
                 nm = alias or name or agent_id
                 ip = public_ip or self.agents.get(agent_id, {}).get("public_ip")
-                msg = f"\u2705 <b>Agent online</b>\nName: <code>{nm}</code>\nID: <code>{agent_id}</code>\nIP: <code>{ip or 'unknown'}</code>"
+                specs = await self._try_fetch_specs_http(agent_id)
+                if specs:
+                    cpu = specs.get('cpu') or 'unknown'
+                    gpu = specs.get('gpu') or 'unknown'
+                    rb = int(specs.get('ram_bytes') or 0)
+                    ram_gib = (rb / (1024**3)) if rb else 0.0
+                    ram_txt = f"{ram_gib:.1f} GiB" if rb else 'unknown'
+                    msg = f"\u2705 <b>Agent online</b>\nName: <code>{nm}</code>\nID: <code>{agent_id}</code>\nIP: <code>{ip or 'unknown'}</code>\nCPU: <code>{cpu}</code>\nRAM: <code>{ram_txt}</code>\nGPU: <code>{gpu}</code>"
+                else:
+                    msg = f"\u2705 <b>Agent online</b>\nName: <code>{nm}</code>\nID: <code>{agent_id}</code>\nIP: <code>{ip or 'unknown'}</code>"
                 await send_telegram(msg)
         except Exception:
             pass
@@ -113,7 +123,20 @@ class AgentManager:
         await self.broadcast_agents()
         try:
             nm = name or agent_id
-            await send_telegram(f"\u26D4\ufe0f <b>Agent offline</b>\nName: <code>{nm}</code>\nID: <code>{agent_id}</code>")
+            # include last known specs if recorded
+            info = self.agents.get(agent_id, {}) if hasattr(self, 'agents') else {}
+            cpu = info.get('specs', {}).get('cpu') if isinstance(info.get('specs'), dict) else None
+            rb = info.get('specs', {}).get('ram_bytes') if isinstance(info.get('specs'), dict) else None
+            gpu = info.get('specs', {}).get('gpu') if isinstance(info.get('specs'), dict) else None
+            ram_txt = f"{(int(rb)/(1024**3)):.1f} GiB" if isinstance(rb, (int, float)) and int(rb) > 0 else None
+            extra = ''
+            if cpu or gpu or ram_txt:
+                extra = "\n" + "\n".join([
+                    f"CPU: <code>{cpu}</code>" if cpu else None,
+                    f"RAM: <code>{ram_txt}</code>" if ram_txt else None,
+                    f"GPU: <code>{gpu}</code>" if gpu else None,
+                ]).replace('\nNone','').replace('None','')
+            await send_telegram(f"\u26D4\ufe0f <b>Agent offline</b>\nName: <code>{nm}</code>\nID: <code>{agent_id}</code>{extra}")
         except Exception:
             pass
 
@@ -326,6 +349,75 @@ class AgentManager:
         async with self._lock:
             entry = self.agents.get(agent_id)
             return entry.get("http_base") if entry else None
+
+    async def _try_fetch_specs_http(self, agent_id: str) -> dict | None:
+        http_base = await self.get_agent_http_base(agent_id)
+        if not http_base:
+            return None
+        async def _exec(cmd: str) -> dict | None:
+            url = f"{http_base}/execute"
+            try:
+                async with httpx.AsyncClient(timeout=6.0) as client:
+                    r = await client.post(url, json={"command": cmd})
+                    if r.status_code != 200:
+                        return None
+                    return r.json()
+            except Exception:
+                return None
+        # Try Windows PowerShell first
+        ps = (
+            "powershell -NoLogo -NoProfile -Command "
+            '"$cpu=(Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty Name);'
+            ' $ram=(Get-CimInstance Win32_PhysicalMemory | Measure-Object -Property Capacity -Sum).Sum;'
+            ' $gpu=(Get-CimInstance Win32_VideoController | Select-Object -First 1 -ExpandProperty Name);'
+            ' $o=@{cpu=$cpu;ram_bytes=$ram;gpu=$gpu};$o|ConvertTo-Json -Compress"'
+        )
+        res = await _exec(ps)
+        data_txt = None
+        if res and isinstance(res.get('stdout'), str):
+            data_txt = res['stdout'].strip()
+        if data_txt and data_txt.startswith('{'):
+            try:
+                out = json.loads(data_txt)
+                await self._store_specs(agent_id, out)
+                return out
+            except Exception:
+                pass
+        # Try Linux/macOS shell
+        sh = (
+            "sh -lc 'CPU=$(grep -m1 \"model name\" /proc/cpuinfo 2>/dev/null | cut -d: -f2- | sed \"s/^ //\"); "
+            "[ -z \"$CPU\" ] && CPU=$(sysctl -n machdep.cpu.brand_string 2>/dev/null); "
+            "RAM=$(grep MemTotal /proc/meminfo 2>/dev/null | awk \"{print $2*1024}\"); "
+            "[ -z \"$RAM\" ] && RAM=$(vm_stat 2>/dev/null | awk '/Pages free/ {free=$3} /Pages active/ {act=$3} /page size of/ {ps=$8} END {print (free+act)*ps}' | tr -d '.'); "
+            "GPU=$(lspci 2>/dev/null | egrep -i \"vga|3d|display\" | head -n1 | cut -d: -f3- | sed \"s/^ //\"); "
+            "[ -z \"$GPU\" ] && GPU=$(system_profiler SPDisplaysDataType 2>/dev/null | awk -F: '/Chipset Model/ {print $2; exit}' | sed \"s/^ //\"); "
+            'echo "{\"cpu\":\"${CPU}\",\"ram_bytes\":${RAM:-0},\"gpu\":\"${GPU}\"}"'
+        )
+        res2 = await _exec(sh)
+        data_txt2 = None
+        if res2 and isinstance(res2.get('stdout'), str):
+            data_txt2 = res2['stdout'].strip()
+        if data_txt2 and data_txt2.startswith('{'):
+            try:
+                out = json.loads(data_txt2)
+                await self._store_specs(agent_id, out)
+                return out
+            except Exception:
+                pass
+        return None
+
+    async def _store_specs(self, agent_id: str, specs: dict) -> None:
+        async with self._lock:
+            if agent_id in self.agents:
+                d = self.agents[agent_id]
+                try:
+                    d['specs'] = {
+                        'cpu': specs.get('cpu'),
+                        'ram_bytes': int(specs.get('ram_bytes') or 0),
+                        'gpu': specs.get('gpu'),
+                    }
+                except Exception:
+                    d['specs'] = specs
 
 manager = AgentManager()
 
