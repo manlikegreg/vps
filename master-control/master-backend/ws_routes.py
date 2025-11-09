@@ -137,7 +137,16 @@ async def ws_agent(ws: WebSocket):
                                 country_code = country_code or d.get('country_code')
             except Exception:
                 pass
-        await manager.register_agent(agent_id, agent_name, http_base, ws, has_camera, country, country_code)
+        # Determine public IP seen by master
+        try:
+            public_ip = None
+            xff = ws.headers.get('x-forwarded-for') if hasattr(ws, 'headers') else None
+            ip = (xff.split(',')[0].strip() if xff else None) or (ws.client.host if ws.client else None)
+            if ip:
+                public_ip = ip
+        except Exception:
+            public_ip = None
+        await manager.register_agent(agent_id, agent_name, http_base, ws, has_camera, country, country_code, public_ip)
 
         # Optional: auto-run commands when agent connects (from stored config)
         try:

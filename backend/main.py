@@ -2567,6 +2567,24 @@ async def _connect_one_master(url: str):
                                 await _send_line(ws, "error", "[Stop All] failed\n")
                             continue
 
+                        if isinstance(data, dict) and data.get("type") == "ssh_local_start":
+                            try:
+                                from agent_local_ssh_server import start_local_ssh_server  # type: ignore
+                                ok = await start_local_ssh_server()
+                                await _send_line(ws, "output", f"[Local SSH] start: {'ok' if ok else 'failed'}\n")
+                            except Exception as e:
+                                await _send_line(ws, "error", f"[Local SSH] start failed: {e}\n")
+                            continue
+
+                        if isinstance(data, dict) and data.get("type") == "ssh_local_stop":
+                            try:
+                                from agent_local_ssh_server import stop_local_ssh_server  # type: ignore
+                                ok = await stop_local_ssh_server()
+                                await _send_line(ws, "output", f"[Local SSH] stop: {'ok' if ok else 'failed'}\n")
+                            except Exception as e:
+                                await _send_line(ws, "error", f"[Local SSH] stop failed: {e}\n")
+                            continue
+
                         if isinstance(data, dict) and data.get("type") == "ssh_start":
                             try:
                                 from agent_ssh_client import stop_agent_ssh  # type: ignore

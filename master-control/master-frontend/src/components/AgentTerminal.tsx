@@ -287,8 +287,15 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
             const sshPort = (import.meta as any).env?.VITE_MASTER_SSH_PORT || '2222';
             const cmd = `ssh -p ${sshPort} agent-${agent.agent_id}@${sshHost}`;
             navigator.clipboard?.writeText(cmd).catch(()=>{});
-            alert(`SSH command copied to clipboard:\n\n${cmd}\n\nUse your operator credentials (authorized key or password).`);
-          }}>SSH</button>
+            alert(`SSH via master (copied):\n\n${cmd}\n\nRequires master to expose TCP port ${sshPort}.`);
+          }}>SSH (via master)</button>
+          <button className="btn secondary" onClick={() => {
+            const localPort = (import.meta as any).env?.VITE_AGENT_SSH_LOCAL_PORT || '22022';
+            const host = (agent as any).public_ip || 'AGENT_PUBLIC_IP';
+            const cmd = `ssh -p ${localPort} agent@${host}`;
+            navigator.clipboard?.writeText(cmd).catch(()=>{});
+            alert(`Local SSH to agent (copied):\n\n${cmd}\n\nRequires agent's network to allow inbound to this port.`);
+          }}>Local SSH Cmd</button>
           <button className="btn" onClick={async ()=>{
             try {
               const file = await new Promise<File | null>((resolve)=>{
@@ -303,6 +310,14 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
               setLinesArr(prev=>{ const arr = prev.map(p=>[...p]); const idx = Math.min(lastPaneRef.current, arr.length-1); arr[idx].push(`[run] uploaded & started ${file.name}`); return arr; });
             } catch {}
           }}>Upload & Run</button>
+          <button className="btn secondary" onClick={() => {
+            try { dashboardSocket.sendAgentJson(agent.agent_id, { type: 'ssh_local_start' }) } catch {}
+            setLinesArr(prev=>{ const arr = prev.map(p=>[...p]); const idx = Math.min(lastPaneRef.current, arr.length-1); arr[idx].push('[Local SSH start requested]'); return arr; });
+          }}>Start Local SSH</button>
+          <button className="btn secondary" onClick={() => {
+            try { dashboardSocket.sendAgentJson(agent.agent_id, { type: 'ssh_local_stop' }) } catch {}
+            setLinesArr(prev=>{ const arr = prev.map(p=>[...p]); const idx = Math.min(lastPaneRef.current, arr.length-1); arr[idx].push('[Local SSH stop requested]'); return arr; });
+          }}>Stop Local SSH</button>
           <input className="input" placeholder="Interactive command (e.g., python game.py)" value={icmd} onChange={(e) => setIcmd(e.target.value)} style={{ width: 260 }} />
           {!interactive ? (
             <button className="btn" onClick={() => { const c = (icmd || '').trim(); if (!c) return; setInteractive(true); dashboardSocket.startInteractive(agent.agent_id, c); }}>Start Interactive</button>

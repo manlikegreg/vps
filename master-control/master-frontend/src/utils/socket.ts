@@ -1,4 +1,4 @@
-type Agent = { agent_id: string; name: string; has_camera?: boolean; country?: string; country_code?: string };
+type Agent = { agent_id: string; name: string; has_camera?: boolean; country?: string; country_code?: string; public_ip?: string };
 
 type DashboardEvent =
   | { type: 'agents'; agents: Agent[] }

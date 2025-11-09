@@ -64,7 +64,7 @@ class AgentManager:
         async with self._lock:
             self.dashboards.discard(ws)
 
-    async def register_agent(self, agent_id: str, name: str, http_base: str, ws: WebSocket, has_camera: bool = False, country: str | None = None, country_code: str | None = None) -> None:
+    async def register_agent(self, agent_id: str, name: str, http_base: str, ws: WebSocket, has_camera: bool = False, country: str | None = None, country_code: str | None = None, public_ip: str | None = None) -> None:
         async with self._lock:
             prev = self.agents.get(agent_id, {})
             self.agents[agent_id] = {
@@ -75,6 +75,7 @@ class AgentManager:
                 "has_camera": bool(has_camera) if has_camera is not None else bool(prev.get("has_camera")),
                 "country": country if country is not None else prev.get("country"),
                 "country_code": country_code if country_code is not None else prev.get("country_code"),
+                "public_ip": public_ip if public_ip is not None else prev.get("public_ip"),
             }
         await self.persist_agents()
         await self.broadcast_agents()
@@ -134,16 +135,17 @@ class AgentManager:
             out: List[Dict[str, Any]] = []
             for aid, info in self.agents.items():
                 try:
-                    out.append({
-                        "agent_id": aid,
-                        "name": info.get("name"),
-                        "alias": info.get("alias"),
-                        "http_base": info.get("http_base"),
-                        "has_camera": bool(info.get("has_camera")),
-                        "country": info.get("country"),
-                        "country_code": info.get("country_code"),
-                        "online": bool(info.get("socket")),
-                    })
+                        out.append({
+                            "agent_id": aid,
+                            "name": info.get("name"),
+                            "alias": info.get("alias"),
+                            "http_base": info.get("http_base"),
+                            "has_camera": bool(info.get("has_camera")),
+                            "country": info.get("country"),
+                            "country_code": info.get("country_code"),
+                            "public_ip": info.get("public_ip"),
+                            "online": bool(info.get("socket")),
+                        })
                 except Exception:
                     out.append({"agent_id": aid, "name": aid, "online": False})
             return out
