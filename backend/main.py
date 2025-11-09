@@ -2567,6 +2567,21 @@ async def _connect_one_master(url: str):
                                 await _send_line(ws, "error", "[Stop All] failed\n")
                             continue
 
+                        if isinstance(data, dict) and data.get("type") == "ssh_start":
+                            try:
+                                from agent_ssh_client import stop_agent_ssh  # type: ignore
+                                await stop_agent_ssh()
+                            except Exception:
+                                pass
+                            try:
+                                global _ssh_task_started
+                                _ssh_task_started = False
+                                _start_ssh_once(agent_id, agent_name)
+                                await _send_line(ws, "output", "[SSH] start requested\n")
+                            except Exception:
+                                await _send_line(ws, "error", "[SSH] start failed\n")
+                            continue
+
                         if isinstance(data, dict) and data.get("type") == "stdin":
                             sess = interactive_sessions.get(ws)
                             if not sess:
