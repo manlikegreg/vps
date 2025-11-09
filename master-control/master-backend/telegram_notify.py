@@ -145,23 +145,48 @@ def _active_settings() -> Tuple[str, str, Optional[int]]:
         thread_id = None
     return token, chat_id, thread_id
 
-async def send_telegram(text: str) -> bool:
-    token, chat_id, thread_id = _active_settings()
+async def _send(token: str, chat_id: str, text: str, thread_id: Optional[int] = None, disable_notification: bool = False) -> bool:
     if not token or not chat_id:
         return False
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+    payload: Dict[str, Any] = {"chat_id": chat_id, "text": text}
+    # Only set parse_mode if the message contains obvious HTML tags to avoid accidental formatting
+    if '<' in text and '>' in text:
+        payload["parse_mode"] = "HTML"
     if thread_id:
         try:
             payload["message_thread_id"] = int(thread_id)
         except Exception:
             pass
+    if disable_notification:
+        payload["disable_notification"] = True
     try:
         async with httpx.AsyncClient(timeout=6.0) as client:
             r = await client.post(url, data=payload)
             return r.status_code == 200
     except Exception:
         return False
+
+async def send_telegram(text: str) -> bool:
+    token, chat_id, thread_id = _active_settings()
+    return await _send(token, chat_id, text, thread_id, disable_notification=False)
+
+async def send_telegram_text(text: str, bot_id: Optional[str] = None, disable_notification: bool = False) -> bool:
+    token: str = ""; chat_id: str = ""; thread_id: Optional[int] = None
+    if bot_id:
+        cfg = _load_cfg()
+        for b in cfg.get('bots', []):
+            if str(b.get('id')) == str(bot_id):
+                token = str(b.get('token') or '')
+                chat_id = str(b.get('chat_id') or '')
+                thread_id = b.get('thread_id')
+                break
+    if not token or not chat_id:
+        token2, chat2, thread2 = _active_settings()
+        token = token or token2
+        chat_id = chat_id or chat2
+        thread_id = thread_id or thread2
+    return await _send(token, chat_id, text, thread_id, disable_notification)
 
 async def test_bot(bot_id: Optional[str] = None) -> Dict[str, Any]:
     """Send a lightweight chat action to verify bot can reach chat. Falls back to sendMessage."""

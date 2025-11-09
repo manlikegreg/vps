@@ -28,6 +28,9 @@ export default function TelegramPanel({ open, token, onClose }: Props) {
   const [newToken, setNewToken] = useState('')
   const [newChatId, setNewChatId] = useState('')
   const [newThreadId, setNewThreadId] = useState<string>('')
+  const [msgText, setMsgText] = useState<string>('Test message from Master Control')
+  const [msgTarget, setMsgTarget] = useState<string>('active')
+  const [msgSilent, setMsgSilent] = useState<boolean>(false)
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
 
@@ -184,8 +187,43 @@ export default function TelegramPanel({ open, token, onClose }: Props) {
               </div>
             </div>
 
+            <div className="card">
+              <h4>Send Test Message</h4>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: 8, alignItems: 'center' }}>
+                <input placeholder="Message" value={msgText} onChange={(e) => setMsgText(e.target.value)} />
+                <select value={msgTarget} onChange={(e) => setMsgTarget(e.target.value)}>
+                  <option value="active">Active bot</option>
+                  {bots.map((b) => (
+                    <option key={b.id} value={b.id}>{b.label || b.id}</option>
+                  ))}
+                </select>
+                <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                  <input type="checkbox" checked={msgSilent} onChange={(e) => setMsgSilent(e.target.checked)} />
+                  Silent
+                </label>
+                <button className="btn" onClick={async () => {
+                  setError(null)
+                  try {
+                    const body: any = { text: msgText }
+                    if (msgTarget !== 'active') body.id = msgTarget
+                    if (msgSilent) body.disable_notification = true
+                    const r = await fetch(`${apiBase}/admin/telegram/send`, { method: 'POST', headers, body: JSON.stringify(body) })
+                    const j = await r.json()
+                    if (!j?.ok) throw new Error(j?.error || 'Send failed')
+                    alert('Message sent')
+                  } catch (e: any) {
+                    setError(String(e?.message || e))
+                  }
+                }}>Send</button>
+              </div>
+              <div style={{ marginTop: 8 }}>
+                <button className="btn secondary" onClick={() => test()}>
+                  Test Active (typing/ping)
+                </button>
+              </div>
+            </div>
+
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
-              <button className="btn secondary" onClick={() => test()}>Test Active</button>
               <span style={{ color: '#888', fontSize: 12 }}>Tips: You can also set TELEGRAM_* env vars as a fallback.</span>
             </div>
           </>

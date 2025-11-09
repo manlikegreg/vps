@@ -347,6 +347,11 @@ class TelegramActivateBody(BaseModel):
 class TelegramTestBody(BaseModel):
     id: str | None = None
 
+class TelegramSendBody(BaseModel):
+    text: str
+    id: str | None = None
+    disable_notification: bool | None = None
+
 @app.get('/admin/telegram')
 async def telegram_get(_: bool = Depends(auth_required)):
     data = tg_list_bots()
@@ -381,6 +386,15 @@ async def telegram_activate(body: TelegramActivateBody, _: bool = Depends(auth_r
 async def telegram_test(body: TelegramTestBody | None = None, _: bool = Depends(auth_required)):
     res = await tg_test_bot((body or TelegramTestBody()).id)
     return JSONResponse(content=res)
+
+@app.post('/admin/telegram/send')
+async def telegram_send(body: TelegramSendBody, _: bool = Depends(auth_required)):
+    txt = (body.text or '').strip()
+    if not txt:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "empty_text"})
+    from telegram_notify import send_telegram_text
+    ok = await send_telegram_text(txt, body.id or None, bool(body.disable_notification))
+    return JSONResponse(content={"ok": ok})
 
 # --- History endpoints ---
 @app.post('/admin/history/upload')
