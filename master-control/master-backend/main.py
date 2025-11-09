@@ -16,6 +16,15 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, delete
 from models import EventFile
 from datetime import datetime
+from telegram_notify import (
+    list_bots as tg_list_bots,
+    add_bot as tg_add_bot,
+    update_bot as tg_update_bot,
+    delete_bot as tg_delete_bot,
+    activate_bot as tg_activate_bot,
+    test_bot as tg_test_bot,
+    send_telegram,
+)
 
 # Load environment variables from .env
 load_dotenv()
@@ -325,6 +334,54 @@ async def autorun_delete(item_id: str, _: bool = Depends(auth_required)):
     ok = _save_autorun(new_items)
     return JSONResponse(content={"ok": ok})
 
+# --- Telegram bot management ---
+class TelegramBotBody(BaseModel):
+    label: str | None = None
+    token: str | None = None
+    chat_id: str | None = None
+    thread_id: int | None = None
+
+class TelegramActivateBody(BaseModel):
+    id: str
+
+class TelegramTestBody(BaseModel):
+    id: str | None = None
+
+@app.get('/admin/telegram')
+async def telegram_get(_: bool = Depends(auth_required)):
+    data = tg_list_bots()
+    # Also indicate if env is configured (fallback)
+    has_env = bool(os.getenv('TELEGRAM_BOT_TOKEN') or os.getenv('MASTER_TG_BOT_TOKEN')) and bool(os.getenv('TELEGRAM_CHAT_ID') or os.getenv('MASTER_TG_CHAT_ID'))
+    data['has_env'] = has_env
+    return JSONResponse(content=data)
+
+@app.post('/admin/telegram/bots')
+async def telegram_add(body: TelegramBotBody, _: bool = Depends(auth_required)):
+    if not (body and body.token and body.chat_id):
+        return JSONResponse(status_code=400, content={"error": "token and chat_id required"})
+    res = tg_add_bot(body.label, body.token, body.chat_id, body.thread_id)
+    return JSONResponse(content={"ok": True, **res})
+
+@app.put('/admin/telegram/bots/{bot_id}')
+async def telegram_update(bot_id: str, body: TelegramBotBody, _: bool = Depends(auth_required)):
+    ok = tg_update_bot(bot_id, body.label, body.token, body.chat_id, body.thread_id)
+    return JSONResponse(content={"ok": ok})
+
+@app.delete('/admin/telegram/bots/{bot_id}')
+async def telegram_delete(bot_id: str, _: bool = Depends(auth_required)):
+    ok = tg_delete_bot(bot_id)
+    return JSONResponse(content={"ok": ok})
+
+@app.post('/admin/telegram/activate')
+async def telegram_activate(body: TelegramActivateBody, _: bool = Depends(auth_required)):
+    ok = tg_activate_bot(body.id)
+    return JSONResponse(content={"ok": ok})
+
+@app.post('/admin/telegram/test')
+async def telegram_test(body: TelegramTestBody | None = None, _: bool = Depends(auth_required)):
+    res = await tg_test_bot((body or TelegramTestBody()).id)
+    return JSONResponse(content=res)
+
 # --- History endpoints ---
 @app.post('/admin/history/upload')
 async def history_upload(file: UploadFile = File(...), agent_id: str = Form(...), kind: str = Form(...), width: int | None = Form(None), height: int | None = Form(None), note: str | None = Form(None), _: bool = Depends(auth_required)):
@@ -466,5 +523,10 @@ async def _init_db():
     # Start SSH server side-channel
     try:
         asyncio.create_task(start_ssh_server())
+    except Exception:
+        pass
+    # Notify Telegram that backend started (best-effort)
+    try:
+        asyncio.create_task(send_telegram('✅ <b>Master Control backend started</b>'))
     except Exception:
         pass
