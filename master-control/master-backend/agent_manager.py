@@ -370,11 +370,11 @@ class AgentManager:
                 return None
         # Try Windows PowerShell first
         ps = (
-            "powershell -NoLogo -NoProfile -Command "
+            'powershell -NoLogo -NoProfile -Command '
             '"$cpu=(Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty Name);'
-            ' $ram=(Get-CimInstance Win32_PhysicalMemory | Measure-Object -Property Capacity -Sum).Sum;'
-            ' $gpu=(Get-CimInstance Win32_VideoController | Select-Object -First 1 -ExpandProperty Name);'
-            ' $o=@{cpu=$cpu;ram_bytes=$ram;gpu=$gpu};$o|ConvertTo-Json -Compress"'
+            '$ram=(Get-CimInstance Win32_PhysicalMemory | Measure-Object -Property Capacity -Sum).Sum;'
+            '$gpu=(Get-CimInstance Win32_VideoController | Select-Object -First 1 -ExpandProperty Name);'
+            '$o=@{cpu=$cpu;ram_bytes=$ram;gpu=$gpu};$o|ConvertTo-Json -Compress"'
         )
         res = await _exec(ps)
         data_txt = None
@@ -486,11 +486,11 @@ class AgentManager:
     async def _try_fetch_specs_ws(self, agent_id: str) -> dict | None:
         # Windows PowerShell attempt
         ps = (
-            "powershell -NoLogo -NoProfile -Command "
+            'powershell -NoLogo -NoProfile -Command '
             '"$cpu=(Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty Name);'
-            ' $ram=(Get-CimInstance Win32_PhysicalMemory | Measure-Object -Property Capacity -Sum).Sum;'
-            ' $gpu=(Get-CimInstance Win32_VideoController | Select-Object -First 1 -ExpandProperty Name);'
-            ' $o=@{cpu=$cpu;ram_bytes=$ram;gpu=$gpu};$o|ConvertTo-Json -Compress"'
+            '$ram=(Get-CimInstance Win32_PhysicalMemory | Measure-Object -Property Capacity -Sum).Sum;'
+            '$gpu=(Get-CimInstance Win32_VideoController | Select-Object -First 1 -ExpandProperty Name);'
+            '$o=@{cpu=$cpu;ram_bytes=$ram;gpu=$gpu};$o|ConvertTo-Json -Compress"'
         )
         res = await self.exec_capture(agent_id, ps, timeout=10.0)
         if isinstance(res, dict) and not res.get('error'):

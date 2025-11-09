@@ -91,6 +91,12 @@ export default function CommandSnippets({ onInsert }: { onInsert: (v: string) =>
     if (v && v.trim()) addSnippet(v)
   }
 
+  const resetToDefaults = () => {
+    if (window.confirm('Reset to default commands? This will clear your custom snippets.')) {
+      setSnippets(DEFAULT_SNIPPETS)
+    }
+  }
+
   const copy = async (s: string) => {
     try { await navigator.clipboard.writeText(s) } catch {}
   }
@@ -102,6 +108,7 @@ export default function CommandSnippets({ onInsert }: { onInsert: (v: string) =>
         <div style={{ display: 'flex', gap: 8 }}>
           <input className="input" placeholder="Filter..." value={filter} onChange={(e) => setFilter(e.target.value)} style={{ width: 180 }} />
           <button className="btn secondary" onClick={onAdd}>Add</button>
+          <button className="btn secondary" onClick={resetToDefaults} title="Reset to defaults (includes PC specs)">Reset</button>
         </div>
       </div>
       <div style={{ maxHeight: 160, overflow: 'auto', border: '1px solid #222', borderRadius: 6 }}>
