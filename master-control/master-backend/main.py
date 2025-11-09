@@ -569,6 +569,14 @@ async def _init_db():
     except Exception:
         pass
 
+# Graceful shutdown notifier (best-effort)
+@app.on_event('shutdown')
+async def _notify_shutdown():
+    try:
+        await send_telegram('🛑 <b>Master Control backend stopping</b>')
+    except Exception:
+        pass
+
 # --- Telegram webhook receiver ---
 from fastapi import Request
 

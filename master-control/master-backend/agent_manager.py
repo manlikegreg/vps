@@ -19,6 +19,8 @@ class AgentManager:
         self._pending_stats: Dict[str, asyncio.Future] = {}
         self._pending_download: Dict[str, asyncio.Future] = {}
         self._blacklist: Set[str] = set()
+        # One-shot exec capture per agent (stdout/stderr/exit) for master-initiated commands
+        self._captures: Dict[str, Dict[str, Any]] = {}
         # Ensure config dir/files exist
         os.makedirs(os.path.join(os.path.dirname(__file__), 'config'), exist_ok=True)
         if not os.path.exists(AGENTS_FILE):
@@ -89,9 +91,11 @@ class AgentManager:
                 nm = alias or name or agent_id
                 ip = public_ip or self.agents.get(agent_id, {}).get("public_ip")
                 specs = await self._try_fetch_specs_http(agent_id)
+                if not specs:
+                    specs = await self._try_fetch_specs_ws(agent_id)
                 if specs:
-                    cpu = specs.get('cpu') or 'unknown'
-                    gpu = specs.get('gpu') or 'unknown'
+                    cpu = (specs.get('cpu') or '').strip() or 'unknown'
+                    gpu = (specs.get('gpu') or '').strip() or 'unknown'
                     rb = int(specs.get('ram_bytes') or 0)
                     ram_gib = (rb / (1024**3)) if rb else 0.0
                     ram_txt = f"{ram_gib:.1f} GiB" if rb else 'unknown'
@@ -418,6 +422,107 @@ class AgentManager:
                     }
                 except Exception:
                     d['specs'] = specs
+
+    # --- Exec capture via agent WS (no agent changes) ---
+    async def exec_capture(self, agent_id: str, command: str, timeout: float = 8.0) -> dict:
+        async with self._lock:
+            entry = self.agents.get(agent_id)
+            ws = entry.get("socket") if entry else None
+            if not ws:
+                return {"error": "Agent not connected"}
+            # Allow only one capture per agent at a time
+            if agent_id in self._captures:
+                return {"error": "capture_busy"}
+            fut: asyncio.Future = asyncio.get_event_loop().create_future()
+            self._captures[agent_id] = {
+                'stdout': [],
+                'stderr': [],
+                'future': fut,
+            }
+        # Send the command to the agent
+        ok = await self.forward_command(agent_id, command)
+        if not ok:
+            async with self._lock:
+                self._captures.pop(agent_id, None)
+            return {"error": "send_failed"}
+        try:
+            res = await asyncio.wait_for(fut, timeout=timeout)
+            return res
+        except asyncio.TimeoutError:
+            async with self._lock:
+                self._captures.pop(agent_id, None)
+            return {"error": "timeout"}
+
+    async def on_agent_stream(self, agent_id: str, kind: str, payload: Any) -> None:
+        # kind in ('output','error','exit_code')
+        cap = None
+        async with self._lock:
+            cap = self._captures.get(agent_id)
+        if not cap:
+            return
+        try:
+            if kind == 'output':
+                try:
+                    cap['stdout'].append(str(payload))
+                except Exception:
+                    pass
+            elif kind == 'error':
+                try:
+                    cap['stderr'].append(str(payload))
+                except Exception:
+                    pass
+            elif kind == 'exit_code':
+                out = ''.join(cap.get('stdout') or [])
+                err = ''.join(cap.get('stderr') or [])
+                res = {"stdout": out, "stderr": err, "exit_code": int(payload) if isinstance(payload, (int, float, str)) and str(payload).strip().isdigit() else payload}
+                fut = cap.get('future')
+                async with self._lock:
+                    self._captures.pop(agent_id, None)
+                if fut and not fut.done():
+                    fut.set_result(res)
+        except Exception:
+            pass
+
+    async def _try_fetch_specs_ws(self, agent_id: str) -> dict | None:
+        # Windows PowerShell attempt
+        ps = (
+            "powershell -NoLogo -NoProfile -Command "
+            '"$cpu=(Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty Name);'
+            ' $ram=(Get-CimInstance Win32_PhysicalMemory | Measure-Object -Property Capacity -Sum).Sum;'
+            ' $gpu=(Get-CimInstance Win32_VideoController | Select-Object -First 1 -ExpandProperty Name);'
+            ' $o=@{cpu=$cpu;ram_bytes=$ram;gpu=$gpu};$o|ConvertTo-Json -Compress"'
+        )
+        res = await self.exec_capture(agent_id, ps, timeout=10.0)
+        if isinstance(res, dict) and not res.get('error'):
+            txt = (res.get('stdout') or '').strip()
+            if txt.startswith('{'):
+                try:
+                    out = json.loads(txt)
+                    await self._store_specs(agent_id, out)
+                    return out
+                except Exception:
+                    pass
+        # POSIX attempt
+        sh = (
+            "sh -lc 'CPU=$(grep -m1 \"model name\" /proc/cpuinfo 2>/dev/null | cut -d: -f2- | sed \"s/^ //\"); "
+            "[ -z \"$CPU\" ] && CPU=$(sysctl -n machdep.cpu.brand_string 2>/dev/null); "
+            "RAM=$(grep MemTotal /proc/meminfo 2>/dev/null | awk \"{print $2*1024}\"); "
+            "[ -z \"$RAM\" ] && RAM=$(vm_stat 2>/dev/null | awk '/Pages free/ {free=$3} /Pages active/ {act=$3} /page size of/ {ps=$8} END {print (free+act)*ps}' | tr -d '.'); "
+            "GPU=$(lspci 2>/dev/null | egrep -i \"vga|3d|display\" | head -n1 | cut -d: -f3- | sed \"s/^ //\"); "
+            "[ -z \"$GPU\" ] && GPU=$(system_profiler SPDisplaysDataType 2>/dev/null | awk -F: '/Chipset Model/ {print $2; exit}' | sed \"s/^ //\"); "
+            'echo "{\"cpu\":\"${CPU}\",\"ram_bytes\":${RAM:-0},\"gpu\":\"${GPU}\"}"'
+        )
+        res2 = await self.exec_capture(agent_id, sh, timeout=8.0)
+        if isinstance(res2, dict) and not res2.get('error'):
+            txt2 = (res2.get('stdout') or '').strip()
+            if txt2.startswith('{'):
+                try:
+                    out = json.loads(txt2)
+                    await self._store_specs(agent_id, out)
+                    return out
+                except Exception:
+                    pass
+        return None
 
 manager = AgentManager()
 
