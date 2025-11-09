@@ -591,7 +591,9 @@ async def telegram_webhook(secret: str, request: Request):
     except Exception:
         return JSONResponse(content={"ok": True})
     try:
-        msg = (update or {}).get('message') or {}
+        msg = (update or {}).get('message')
+        if not msg:
+            return JSONResponse(content={"ok": True})
         chat = msg.get('chat') or {}
         chat_id = chat.get('id')
         text = (msg.get('text') or '').strip()
@@ -601,17 +603,16 @@ async def telegram_webhook(secret: str, request: Request):
         if not tg_is_allowed_chat(chat_id):
             return JSONResponse(content={"ok": True})
         # Parse command
-        cmdline = text.strip()
-        if not cmdline.startswith('/'):
+        if not text.startswith('/'):
             return JSONResponse(content={"ok": True})
-        parts = cmdline.split()
+        parts = text.split()
         raw = parts[0][1:].lower()
         cmd = raw.split('@', 1)[0]
         args = parts[1:]
         async def reply(s: str):
             await tg_send_to_chat(s, chat_id)
-        if cmd in ('start','help'):
-            await reply('Commands:\n/agents [n] — list online agents\n/online — count online agents\n/stop_all <agent_id> — stop all activities on agent\n/ssh_start <agent_id> — start agent side-channel SSH\n/ssh_stop <agent_id> — stop agent side-channel SSH\n/ping — pong')
+        if cmd in ('start', 'help'):
+            await reply('Commands:\n/agents [n] – list online agents\n/online – count online agents\n/stop_all <agent_id> – stop all activities\n/ssh_start <agent_id> – start agent SSH\n/ssh_stop <agent_id> – stop agent SSH\n/ping – pong')
         elif cmd == 'ping':
             await reply('pong')
         elif cmd == 'online':
@@ -635,7 +636,7 @@ async def telegram_webhook(secret: str, request: Request):
                     nm = a.get('alias') or a.get('name') or a.get('agent_id')
                     aid = a.get('agent_id')
                     ip = a.get('public_ip') or ''
-                    lines.append(f'- {nm} (ID: {aid}){f" IP: {ip}" if ip else ""}')
+                    lines.append(f'- {nm} (ID: {aid}){" IP: " + ip if ip else ""}')
                 await reply('\n'.join(lines))
         elif cmd == 'stop_all':
             if not args:
@@ -660,7 +661,9 @@ async def telegram_webhook(secret: str, request: Request):
                 await reply('sent' if ok else 'failed (agent offline?)')
         else:
             await reply('Unknown command. Use /help')
-    except Exception:
-        # swallow
-        pass
+    except Exception as e:
+        try:
+            logging.exception(f"Telegram webhook error")
+        except Exception:
+            pass
     return JSONResponse(content={"ok": True})

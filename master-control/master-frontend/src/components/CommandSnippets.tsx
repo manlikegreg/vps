@@ -10,6 +10,35 @@ const DEFAULT_SNIPPETS = [
   'cd ..',
   // Git
   'git status',
+  // PC Specs: System Overview
+  'systeminfo',
+  'dxdiag /t %TEMP%\\dxdiag.txt',
+  // PC Specs: CPU Info
+  'wmic cpu get Name,NumberOfCores,NumberOfLogicalProcessors,MaxClockSpeed,ProcessorId',
+  // PC Specs: RAM Total
+  'wmic computersystem get TotalPhysicalMemory',
+  // PC Specs: RAM Modules
+  'wmic memorychip get Manufacturer,PartNumber,Capacity,Speed,SerialNumber,BankLabel,DeviceLocator',
+  // PC Specs: GPU Info
+  'wmic path win32_videocontroller get Name,DriverVersion,AdapterRAM,VideoProcessor',
+  // PC Specs: Storage Disks
+  'wmic diskdrive get Model,Size,SerialNumber,MediaType,InterfaceType',
+  // PC Specs: Volumes/Partitions
+  'wmic logicaldisk get DeviceID,VolumeName,FileSystem,Size,FreeSpace',
+  // PC Specs: Motherboard
+  'wmic baseboard get Manufacturer,Product,SerialNumber,Version',
+  // PC Specs: BIOS Info
+  'wmic bios get Manufacturer,SMBIOSBIOSVersion,ReleaseDate',
+  // PC Specs: OS Details
+  'wmic os get Caption,Version,BuildNumber,OSArchitecture,SerialNumber',
+  // PC Specs: Network Adapters
+  'wmic nic where "NetEnabled=true" get Name,MACAddress,Speed',
+  // PC Specs: Sound Devices
+  'wmic sounddev get Name,Manufacturer',
+  // PC Specs: Battery Status (Laptops)
+  'wmic path win32_battery get Name,EstimatedChargeRemaining,BatteryStatus',
+  // PC Specs: All Drivers
+  'driverquery /v /fo table',
 ]
 
 function useSnippets() {
