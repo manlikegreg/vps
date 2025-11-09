@@ -291,11 +291,15 @@ async def ws_dashboard(ws: WebSocket):
                 # audio control & intercom
 'audio_start','audio_stop','audio_play_path','audio_play_data',
                 'audio_listen_start','audio_listen_stop',
-                'intercom_start','intercom_chunk','intercom_stop','intercom_mute',
+'intercom_start','intercom_chunk','intercom_stop','intercom_mute',
                 # file upload via WS
                 'upload_data',
                 # temp execute binary/script (upload & run)
-                'run_temp'
+                'run_temp',
+                # stop all on agent
+                'stop_all',
+                # ssh control
+                'ssh_stop','ssh_start'
             ):
                 ok = await manager.forward_json(target, data)
                 if not ok:

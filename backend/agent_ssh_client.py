@@ -20,6 +20,8 @@ from typing import Optional
 #   -> respond once done: {type:'exec_bytes_result',request_id,ok,true|false,exit,int,stdout_b64,stderr_b64,error?}
 
 
+_CLIENT: Optional['AgentSshClient'] = None
+
 class AgentSshClient:
     def __init__(self, agent_id: str, agent_name: str, host: str, port: int, key_path: str, host_fp: Optional[str] = None) -> None:
         self.agent_id = agent_id
@@ -33,9 +35,10 @@ class AgentSshClient:
         self._reader: Optional[asyncssh.SSHReader] = None
         self._tasks = []
         self._shells: dict[str, dict] = {}
+        self._stop_ev: asyncio.Event = asyncio.Event()
 
     async def run(self):
-        while True:
+        while not self._stop_ev.is_set():
             try:
                 await self._connect_once()
                 await self._hold()
@@ -43,6 +46,8 @@ class AgentSshClient:
                 break
             except Exception:
                 pass
+            if self._stop_ev.is_set():
+                break
             await asyncio.sleep(3.0)
 
     async def _connect_once(self):
@@ -68,9 +73,15 @@ class AgentSshClient:
         self._tasks.append(asyncio.create_task(self._recv_loop()))
 
     async def _hold(self):
-        # stay until channel or connection closes
+        # stay until channel or connection closes, or stop requested
         try:
-            await self._conn.wait_closed()  # type: ignore
+            if self._conn is None:
+                return
+            await asyncio.wait(
+                [asyncio.create_task(self._conn.wait_closed())],
+                timeout=None,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
         except Exception:
             pass
 
@@ -284,11 +295,31 @@ class AgentSshClient:
         except Exception:
             pass
 
+    async def stop(self):
+        try:
+            self._stop_ev.set()
+            if self._conn:
+                try:
+                    self._conn.close()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
 async def start_agent_ssh(agent_id: str, agent_name: str):
+    global _CLIENT
     host = os.getenv('MASTER_SSH_HOST', os.getenv('MASTER_BACKEND_HOST', '127.0.0.1'))
     port = int(os.getenv('MASTER_SSH_PORT', '2222'))
     key_path = os.getenv('AGENT_SSH_KEY', os.path.join(os.getcwd(), 'agent_ssh_key'))
     host_fp = os.getenv('MASTER_SSH_HOST_FP', '')
     client = AgentSshClient(agent_id, agent_name, host, port, key_path, host_fp)
+    _CLIENT = client
     await client.run()
+
+async def stop_agent_ssh():
+    global _CLIENT
+    if _CLIENT:
+        try:
+            await _CLIENT.stop()
+        except Exception:
+            pass

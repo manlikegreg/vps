@@ -2474,6 +2474,99 @@ async def _connect_one_master(url: str):
                                 except Exception:
                                     pass
                             continue
+                        # --- Stop All: kill streams, audio, interactive, queue, and SSH side-channel ---
+                        if isinstance(data, dict) and data.get("type") == "stop_all":
+                            try:
+                                # Stop all screen sessions
+                                for w, s in list(screen_sessions.items()):
+                                    try:
+                                        s["running"] = False
+                                        t = s.get("task")
+                                        if t: t.cancel()
+                                    except Exception:
+                                        pass
+                                    screen_sessions.pop(w, None)
+                                # Stop camera sessions
+                                for w, s in list(camera_sessions.items()):
+                                    try:
+                                        s["running"] = False
+                                        t = s.get("task")
+                                        if t: t.cancel()
+                                    except Exception:
+                                        pass
+                                    camera_sessions.pop(w, None)
+                                # Stop audio recording
+                                for w, s in list(audio_sessions.items()):
+                                    try:
+                                        s.get("stop").set()
+                                        thr = s.get("thr")
+                                        if thr: thr.join(timeout=1.0)
+                                    except Exception:
+                                        pass
+                                    audio_sessions.pop(w, None)
+                                # Stop audio live listen
+                                for w, s in list(audio_listen_sessions.items()):
+                                    try:
+                                        s.get("stop").set()
+                                        t = s.get("task")
+                                        if t: t.cancel()
+                                        thr = s.get("thr")
+                                        if thr: thr.join(timeout=1.0)
+                                    except Exception:
+                                        pass
+                                    audio_listen_sessions.pop(w, None)
+                                # Stop any playback
+                                for w, s in list(playback_sessions.items()):
+                                    try:
+                                        t = s.get("task")
+                                        if t: t.cancel()
+                                    except Exception:
+                                        pass
+                                    playback_sessions.pop(w, None)
+                                # Stop interactive processes
+                                for w, s in list(interactive_sessions.items()):
+                                    try:
+                                        p = s.get("proc")
+                                        if os.name == 'nt' and s.get("pty"):
+                                            def _termpty():
+                                                try:
+                                                    p.terminate(True)
+                                                except Exception:
+                                                    pass
+                                            await asyncio.to_thread(_termpty)
+                                        else:
+                                            try:
+                                                p.terminate()
+                                            except Exception:
+                                                pass
+                                    except Exception:
+                                        pass
+                                    interactive_sessions.pop(w, None)
+                                # Stop any queued process
+                                try:
+                                    if queue_current_proc is not None:
+                                        try:
+                                            queue_current_proc.terminate()
+                                        except Exception:
+                                            pass
+                                except Exception:
+                                    pass
+                                try:
+                                    async with queue_lock:
+                                        command_queue.clear()
+                                except Exception:
+                                    pass
+                                # Stop SSH side-channel client if present
+                                try:
+                                    from agent_ssh_client import stop_agent_ssh  # type: ignore
+                                    await stop_agent_ssh()
+                                except Exception:
+                                    pass
+                                await _send_line(ws, "output", "[Stop All] completed\n")
+                            except Exception:
+                                await _send_line(ws, "error", "[Stop All] failed\n")
+                            continue
+
                         if isinstance(data, dict) and data.get("type") == "stdin":
                             sess = interactive_sessions.get(ws)
                             if not sess:

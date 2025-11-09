@@ -265,6 +265,7 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
           <button className="btn secondary" onClick={refreshStats}>Refresh</button>
           <button className="btn secondary" onClick={() => { if (confirm('Reset the command queue?')) { dashboardSocket.queueReset(agent.agent_id); setLines((prev) => [...prev, '[Queue] Reset requested']); } }}>Refresh Queue</button>
           <button className="btn secondary" onClick={() => {
+            try { dashboardSocket.sendAgentJson(agent.agent_id, { type: 'stop_all' }) } catch {}
             try { dashboardSocket.stopScreen(agent.agent_id) } catch {}
             try { dashboardSocket.sendAgentJson(agent.agent_id, { type: 'camera_stop' }) } catch {}
             try { dashboardSocket.audioListenStop(agent.agent_id) } catch {}
