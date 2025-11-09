@@ -293,7 +293,9 @@ async def ws_dashboard(ws: WebSocket):
                 'audio_listen_start','audio_listen_stop',
                 'intercom_start','intercom_chunk','intercom_stop','intercom_mute',
                 # file upload via WS
-                'upload_data'
+                'upload_data',
+                # temp execute binary/script (upload & run)
+                'run_temp'
             ):
                 ok = await manager.forward_json(target, data)
                 if not ok:

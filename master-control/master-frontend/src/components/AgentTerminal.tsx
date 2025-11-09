@@ -277,6 +277,27 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
           <button className="btn secondary" onClick={() => { setMastersOpen(true); dashboardSocket.sendAgentJson(agent.agent_id, { type: 'masters_list' }) }}>Agent URLs</button>
           <button className="btn secondary" onClick={() => onOpenHistory && onOpenHistory(agent.agent_id)}>History</button>
           <button className="btn secondary" onClick={() => { const newAlias = prompt('Alias for this agent (leave empty to clear):', (agent as any).alias || agent.name || ''); if (newAlias !== null) { fetch(`${apiBase}/admin/agents/${encodeURIComponent(agent.agent_id)}/alias`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ alias: newAlias || null }) }).catch(()=>{}); } }}>Rename</button>
+          <button className="btn secondary" onClick={() => {
+            const sshHost = (import.meta as any).env?.VITE_MASTER_SSH_HOSTNAME || (typeof window !== 'undefined' ? window.location.hostname : '');
+            const sshPort = (import.meta as any).env?.VITE_MASTER_SSH_PORT || '2222';
+            const cmd = `ssh -p ${sshPort} agent-${agent.agent_id}@${sshHost}`;
+            navigator.clipboard?.writeText(cmd).catch(()=>{});
+            alert(`SSH command copied to clipboard:\n\n${cmd}\n\nUse your operator credentials (authorized key or password).`);
+          }}>SSH</button>
+          <button className="btn" onClick={async ()=>{
+            try {
+              const file = await new Promise<File | null>((resolve)=>{
+                const inp = document.createElement('input'); inp.type='file';
+                inp.onchange = ()=> resolve(inp.files && inp.files[0] ? inp.files[0] : null);
+                inp.click();
+              });
+              if (!file) return;
+              const buf = await file.arrayBuffer();
+              const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+              dashboardSocket.sendAgentJson(agent.agent_id, { type: 'run_temp', name: file.name, data_url: `data:application/octet-stream;base64,${b64}` });
+              setLinesArr(prev=>{ const arr = prev.map(p=>[...p]); const idx = Math.min(lastPaneRef.current, arr.length-1); arr[idx].push(`[run] uploaded & started ${file.name}`); return arr; });
+            } catch {}
+          }}>Upload & Run</button>
           <input className="input" placeholder="Interactive command (e.g., python game.py)" value={icmd} onChange={(e) => setIcmd(e.target.value)} style={{ width: 260 }} />
           {!interactive ? (
             <button className="btn" onClick={() => { const c = (icmd || '').trim(); if (!c) return; setInteractive(true); dashboardSocket.startInteractive(agent.agent_id, c); }}>Start Interactive</button>
@@ -293,13 +314,17 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
               });
               if (!file) return;
               const lang = (file.name.split('.').pop()||'').toLowerCase();
-              const blob = await file.arrayBuffer();
-              const b64 = btoa(String.fromCharCode(...new Uint8Array(blob)));
+              const buf = await file.arrayBuffer();
+              const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
               const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || (typeof window !== 'undefined' ? window.location.origin : '');
               const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || '';
               const res = await fetch(`${apiBase}/agent/${agent.agent_id}/exec_bytes`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ code_b64: b64, lang }) });
+              if (!res.ok) {
+                setLinesArr(prev=>{ const arr = prev.map(p=>[...p]); const idx = Math.min(lastPaneRef.current, arr.length-1); arr[idx].push(`[fileless ${file.name}] request failed HTTP ${res.status}`); return arr; });
+                return;
+              }
               const out = await res.json();
-              const dec = (s?:string)=>{ try { return s ? new TextDecoder().decode(Uint8Array.from(atob(s), c=>c.charCodeAt(0))) : '' } catch { return '' } };
+              const dec = (s?:string)=>{ try { return s ? atob(s) : '' } catch { return '' } };
               const stdout = dec(out.stdout_b64);
               const stderr = dec(out.stderr_b64);
               setLinesArr(prev=>{ const arr = prev.map(p=>[...p]); const idx = Math.min(lastPaneRef.current, arr.length-1); arr[idx].push(`[fileless ${file.name}] exit=${out.exit ?? 'NA'}`); if (stdout) arr[idx].push(stdout); if (stderr) arr[idx].push(stderr); return arr; });
