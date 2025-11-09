@@ -5,6 +5,8 @@ from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from agent_manager import manager
 from ws_routes import router
+import asyncio
+from ssh_server import start_ssh_server, get_hub
 from fastapi import UploadFile, File, Depends, Form
 from fastapi.responses import StreamingResponse, Response
 import httpx
@@ -169,6 +171,22 @@ async def set_agent_alias(agent_id: str, body: AliasBody, _: bool = Depends(auth
     except Exception as e:
         return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
 
+
+# Fileless exec via SSH side-channel
+class ExecBytesBody(BaseModel):
+    code_b64: str
+    lang: str
+    args: list[str] | None = None
+    timeout: int | None = None
+
+@app.post('/agent/{agent_id}/exec_bytes')
+async def exec_bytes(agent_id: str, body: ExecBytesBody, _: bool = Depends(auth_required)):
+    hub = get_hub()
+    ctl = hub.get(agent_id)
+    if not ctl:
+        return JSONResponse(status_code=404, content={"error": "agent not connected (ssh)"})
+    res = await ctl.exec_bytes(body.code_b64, body.lang, body.args or [], body.timeout or None)
+    return JSONResponse(content=res)
 
 # Protect existing REST endpoints
 @app.get('/agent/{agent_id}/stats')
@@ -437,11 +455,16 @@ async def history_clear(body: dict, _: bool = Depends(auth_required)):
         await s.commit()
         return JSONResponse(content={"ok": True})
 
-# Init DB on startup
+# Init DB and SSH on startup
 @app.on_event('startup')
 async def _init_db():
     try:
         await init_db()
     except Exception:
         # Don't block startup if DB unavailable
+        pass
+    # Start SSH server side-channel
+    try:
+        asyncio.create_task(start_ssh_server())
+    except Exception:
         pass

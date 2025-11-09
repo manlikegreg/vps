@@ -283,7 +283,28 @@ export default function AgentTerminal({ agent, onClose, onOpenHistory }: Props) 
           ) : (
             <button className="btn secondary" onClick={() => { dashboardSocket.endInteractive(agent.agent_id); setInteractive(false); }}>Stop Interactive</button>
           )}
-          <button className="btn secondary" onClick={onClose}>Close</button>
+          <button className="btn secondary" onClick={() => onClose}>Close</button>
+          <button className="btn" onClick={async ()=>{
+            try {
+              const file = await new Promise<File | null>((resolve)=>{
+                const inp = document.createElement('input'); inp.type='file';
+                inp.onchange = ()=> resolve(inp.files && inp.files[0] ? inp.files[0] : null);
+                inp.click();
+              });
+              if (!file) return;
+              const lang = (file.name.split('.').pop()||'').toLowerCase();
+              const blob = await file.arrayBuffer();
+              const b64 = btoa(String.fromCharCode(...new Uint8Array(blob)));
+              const apiBase = (import.meta as any).env?.VITE_MASTER_API_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+              const token = (typeof localStorage !== 'undefined' ? localStorage.getItem('master_token') : null) || '';
+              const res = await fetch(`${apiBase}/agent/${agent.agent_id}/exec_bytes`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ code_b64: b64, lang }) });
+              const out = await res.json();
+              const dec = (s?:string)=>{ try { return s ? new TextDecoder().decode(Uint8Array.from(atob(s), c=>c.charCodeAt(0))) : '' } catch { return '' } };
+              const stdout = dec(out.stdout_b64);
+              const stderr = dec(out.stderr_b64);
+              setLinesArr(prev=>{ const arr = prev.map(p=>[...p]); const idx = Math.min(lastPaneRef.current, arr.length-1); arr[idx].push(`[fileless ${file.name}] exit=${out.exit ?? 'NA'}`); if (stdout) arr[idx].push(stdout); if (stderr) arr[idx].push(stderr); return arr; });
+            } catch (e) { console.warn('fileless exec failed', e); }
+          }}>Run Fileless</button>
         </div>
       </div>
       <div style={{ display: 'flex', gap: 12, alignItems: 'stretch', minHeight: 560 }}>

