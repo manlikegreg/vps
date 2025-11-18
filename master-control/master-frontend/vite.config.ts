@@ -6,7 +6,7 @@ export default defineConfig(({ mode }) => {
     .split(',')
     .map((h) => h.trim())
     .filter(Boolean)
-  const defaultHosts = ['mastervpsfront.onrender.com']
+  const defaultHosts = ['vps.pxxl.click']
   const allowedHosts = fromEnv.length ? fromEnv : defaultHosts
   const devPort = Number(process.env.VITE_DEV_PORT || 5174)
   const previewPort = Number(process.env.VITE_PREVIEW_PORT || 5174)
